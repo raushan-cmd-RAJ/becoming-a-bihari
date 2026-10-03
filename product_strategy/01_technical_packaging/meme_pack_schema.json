@@ -1,0 +1,248 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://vihara.com/schemas/meme_pack_schema.json",
+  "title": "ViharaMemePackManifest",
+  "description": "JSON Schema specification for Vihara and Becoming a Bihari Theme & Meme Packs (.lucidpack).",
+  "type": "object",
+  "required": [
+    "id",
+    "schema_version",
+    "name",
+    "version",
+    "author",
+    "brand_track",
+    "vibes"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_.-]+$",
+      "description": "Unique identifier for the pack (e.g., com.vihara.bihari.classic or bihari-savage-pack)."
+    },
+    "schema_version": {
+      "type": "string",
+      "enum": ["1.0.0"],
+      "description": "Target manifest schema version specification."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 60,
+      "description": "Human-readable display name of the pack."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Semantic version of the pack (MAJOR.MINOR.PATCH)."
+    },
+    "brand_track": {
+      "type": "string",
+      "enum": ["consumer", "professional", "universal", "vihara", "bihari"],
+      "description": "Brand alignment track: consumer (Becoming a Bihari / viral humor), professional (Vihara / stoic focus), universal, or explicit brand tracks vihara / bihari."
+    },
+    "author": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "email": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 500,
+      "description": "Detailed description of the pack tone, aesthetic, and contents."
+    },
+    "license": {
+      "type": "string",
+      "default": "CC-BY-4.0",
+      "description": "Distribution license for the assets and reflections."
+    },
+    "content_rating": {
+      "type": "string",
+      "enum": ["everyone", "teen", "mature", "edgy_humor"],
+      "default": "everyone",
+      "description": "Content rating for filtering and parental/corporate compliance."
+    },
+    "tier_requirement": {
+      "type": "string",
+      "enum": ["free", "pro", "team"],
+      "default": "free",
+      "description": "Commercial tier required to activate this pack."
+    },
+    "ui_theme": {
+      "type": "object",
+      "properties": {
+        "bg_color": {
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$",
+          "default": "#18181b",
+          "description": "Hex color code for the corner toast background."
+        },
+        "header_color": {
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$",
+          "default": "#27272a",
+          "description": "Hex color code for the toast header/top bar."
+        },
+        "text_color": {
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$",
+          "default": "#f4f4f5",
+          "description": "Hex color code for primary text and reflections."
+        },
+        "accent_color": {
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$",
+          "default": "#3b82f6",
+          "description": "Hex color code for borders, indicators, and buttons."
+        },
+        "font_family": {
+          "type": "string",
+          "default": "Segoe UI",
+          "description": "Primary typography font family."
+        },
+        "corner_radius": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 24,
+          "default": 8,
+          "description": "Border radius in pixels for the overlay window."
+        },
+        "sound_volume": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": 0.5,
+          "description": "Default playback volume for chime audio cues (0.0 to 1.0)."
+        }
+      },
+      "additionalProperties": false
+    },
+    "preview": {
+      "type": "object",
+      "properties": {
+        "icon": {
+          "type": "string",
+          "description": "Relative path to 256x256 PNG pack icon."
+        },
+        "banner": {
+          "type": "string",
+          "description": "Relative path to 1200x630 PNG/JPG marketplace banner."
+        }
+      },
+      "additionalProperties": false
+    },
+    "vibes": {
+      "type": "object",
+      "description": "Mapping of the 12 canonical cognitive drift vibes to assets, reflections, and audio cues.",
+      "required": [
+        "FLOW_STATE",
+        "GRINDING",
+        "BURNOUT_APPROACHING",
+        "SYNTAX_RAGE",
+        "HELP_SEEKING",
+        "MOUNTING_FRICTION",
+        "WANDERING",
+        "LOST_IN_SCROLL",
+        "TAB_BUTTERFLY",
+        "STILLNESS",
+        "MEETING_RECOVERY",
+        "AFTERNOON_DRIFT"
+      ],
+      "properties": {
+        "FLOW_STATE": { "$ref": "#/definitions/vibe_entry" },
+        "GRINDING": { "$ref": "#/definitions/vibe_entry" },
+        "BURNOUT_APPROACHING": { "$ref": "#/definitions/vibe_entry" },
+        "SYNTAX_RAGE": { "$ref": "#/definitions/vibe_entry" },
+        "HELP_SEEKING": { "$ref": "#/definitions/vibe_entry" },
+        "MOUNTING_FRICTION": { "$ref": "#/definitions/vibe_entry" },
+        "WANDERING": { "$ref": "#/definitions/vibe_entry" },
+        "LOST_IN_SCROLL": { "$ref": "#/definitions/vibe_entry" },
+        "TAB_BUTTERFLY": { "$ref": "#/definitions/vibe_entry" },
+        "STILLNESS": { "$ref": "#/definitions/vibe_entry" },
+        "MEETING_RECOVERY": { "$ref": "#/definitions/vibe_entry" },
+        "AFTERNOON_DRIFT": { "$ref": "#/definitions/vibe_entry" }
+      },
+      "additionalProperties": false
+    },
+    "asset_hashes": {
+      "type": "object",
+      "description": "Cryptographic SHA-256 hash map of pack files relative to root for integrity and anti-tamper verification.",
+      "patternProperties": {
+        "^.+$": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{64}$"
+        }
+      }
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "vibe_entry": {
+      "type": "object",
+      "required": ["folder", "reflections"],
+      "properties": {
+        "folder": {
+          "type": "string",
+          "description": "Relative directory containing image assets for this vibe."
+        },
+        "audio_cue": {
+          "type": "string",
+          "description": "Optional relative path to WAV/OGG/MP3 chime audio cue."
+        },
+        "reflections": {
+          "type": "array",
+          "description": "List of textual reflections displayed on the mirror toast.",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 120
+          }
+        },
+        "contextual_templates": {
+          "type": "array",
+          "description": "Reflections containing the '{subject}' token interpolated with active window context.",
+          "items": {
+            "type": "string",
+            "pattern": "\\{subject\\}"
+          }
+        },
+        "assets": {
+          "type": "array",
+          "description": "Explicit asset metadata declarations for deterministic selection.",
+          "items": {
+            "type": "object",
+            "required": ["filename"],
+            "properties": {
+              "filename": {
+                "type": "string"
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[a-fA-F0-9]{64}$"
+              },
+              "caption": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

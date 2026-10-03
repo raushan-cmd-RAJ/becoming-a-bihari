@@ -1,0 +1,110 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller / Inno Setup builds
+*.manifest
+*.spec.bak
+dist/
+build/
+Output/
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Local database and caches
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+vibe_history.db
+pack_errors.log
+*.log
+
+# Meme runtime cache (local downloads)
+memes/live-cache/*
+!memes/live-cache/.gitkeep
+memes/in-the-zone/*
+!memes/in-the-zone/.gitkeep
+memes/the-long-grind/*
+!memes/the-long-grind/.gitkeep
+memes/running-on-fumes/*
+!memes/running-on-fumes/.gitkeep
+memes/fighting-the-code/*
+!memes/fighting-the-code/.gitkeep
+memes/asking-the-internet/*
+!memes/asking-the-internet/.gitkeep
+memes/mounting-friction/*
+!memes/mounting-friction/.gitkeep
+memes/just-wandering/*
+!memes/just-wandering/.gitkeep
+memes/lost-in-the-scroll/*
+!memes/lost-in-the-scroll/.gitkeep
+memes/tab-butterfly/*
+!memes/tab-butterfly/.gitkeep
+memes/the-great-pause/*
+!memes/the-great-pause/.gitkeep
+memes/post-meeting-recovery/*
+!memes/post-meeting-recovery/.gitkeep
+memes/afternoon-drift/*
+!memes/afternoon-drift/.gitkeep
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE & OS
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Multi-agent internal coordination
+.agents/

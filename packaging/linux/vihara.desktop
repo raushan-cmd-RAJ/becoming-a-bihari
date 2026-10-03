@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Vihara
+GenericName=Mindfulness Mirror
+Comment=Self-reflecting focus companion and gentle habit catalyst
+Exec=vihara %U
+Icon=vihara
+Terminal=false
+Categories=Utility;Office;Clock;
+MimeType=application/x-lucidpack;
+StartupNotify=false
+X-GNOME-Autostart-enabled=true

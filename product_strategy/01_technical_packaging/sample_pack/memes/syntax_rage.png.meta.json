@@ -1,0 +1,14 @@
+{
+  "asset_name": "syntax_rage.png",
+  "vibe": "SYNTAX_RAGE",
+  "sha256": "4a5b6c7d8e9f0123456789abcdef0123456789abcdef0123456789abcdef0123",
+  "format": "png",
+  "width": 600,
+  "height": 450,
+  "caption": "When the compiler rejects what your soul knows is correct",
+  "alt_text": "Developer aggressively staring at a single red squiggly line in the terminal",
+  "attribution": {
+    "creator": "Lucid Creative Lab",
+    "license": "CC-BY-4.0"
+  }
+}

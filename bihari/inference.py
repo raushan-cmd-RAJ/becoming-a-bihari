@@ -1,0 +1,1262 @@
+"""
+Module 2: THE INFERENCE BRIDGE — Hybrid vibe classifier.
+
+Architecture:
+  1. Rule Engine (primary): Instant, zero-cost deterministic classifier.
+     Uses app context, typing metrics, window title keywords, time-of-day,
+     and session duration to classify into one of 12 vibes.
+  2. Laya Router (secondary): 421M non-autoregressive decision model.
+     Only loaded when rules are ambiguous. Returns calibrated probabilities.
+
+Philosophy:
+  The tool is a mirror, not a judge. Vibes are internal labels for accurate
+  detection. What the user sees is a first-person reflection phrase — never
+  a verdict or a command. The humor creates a tiny gap between the user and
+  their current state, and that gap is mindfulness.
+"""
+
+from enum import Enum
+from dataclasses import dataclass
+from typing import Any, Optional
+import os
+import re
+import random
+import logging
+import warnings
+
+# Suppress upstream Laya checkpoint temperature calibration RuntimeWarning
+warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*laya: this checkpoint ships invalid temperatures.*")
+
+logger = logging.getLogger(__name__)
+
+
+# ──────────────────────────────────────────────
+# The 12 Vibes — 4 categories × 3 states
+# ──────────────────────────────────────────────
+
+class Vibe(str, Enum):
+    """
+    12 emotional/behavioral states organized into 4 categories.
+
+    These labels are internal only — the user never sees them.
+    What the user sees are first-person reflection phrases.
+    """
+    # ── Intensity: How hard you're pushing ──
+    FLOW_STATE = "FLOW_STATE"
+    GRINDING = "GRINDING"
+    BURNOUT_APPROACHING = "BURNOUT_APPROACHING"
+
+    # ── Frustration: How much you're struggling ──
+    SYNTAX_RAGE = "SYNTAX_RAGE"
+    HELP_SEEKING = "HELP_SEEKING"
+    MOUNTING_FRICTION = "MOUNTING_FRICTION"
+
+    # ── Avoidance: How much you're dodging ──
+    WANDERING = "WANDERING"
+    LOST_IN_SCROLL = "LOST_IN_SCROLL"
+    TAB_BUTTERFLY = "TAB_BUTTERFLY"
+
+    # ── Downtime: Breaks and transitions ──
+    STILLNESS = "STILLNESS"
+    MEETING_RECOVERY = "MEETING_RECOVERY"
+    AFTERNOON_DRIFT = "AFTERNOON_DRIFT"
+
+
+# ──────────────────────────────────────────────
+# Vibe → Human-readable folder name mapping
+# ──────────────────────────────────────────────
+
+VIBE_FOLDER_NAMES: dict[Vibe, str] = {
+    Vibe.FLOW_STATE: "in-the-zone",
+    Vibe.GRINDING: "the-long-grind",
+    Vibe.BURNOUT_APPROACHING: "running-on-fumes",
+    Vibe.SYNTAX_RAGE: "fighting-the-code",
+    Vibe.HELP_SEEKING: "asking-the-internet",
+    Vibe.MOUNTING_FRICTION: "mounting-friction",
+    Vibe.WANDERING: "just-wandering",
+    Vibe.LOST_IN_SCROLL: "lost-in-the-scroll",
+    Vibe.TAB_BUTTERFLY: "tab-butterfly",
+    Vibe.STILLNESS: "the-great-pause",
+    Vibe.MEETING_RECOVERY: "post-meeting-recovery",
+    Vibe.AFTERNOON_DRIFT: "afternoon-drift",
+}
+
+
+# ──────────────────────────────────────────────
+# Dual-Track Reflection Architecture
+#
+# Track A (Becoming a Bihari): Irreverent, witty roast reflections.
+# Track B (Vihara): Dignified, stoic mindfulness reflections.
+# ──────────────────────────────────────────────
+
+REFLECTIONS_TRACK_A: dict[Vibe, list[str]] = {
+    Vibe.FLOW_STATE: [
+        "you and the code are one right now",
+        "the zone. you're in it.",
+        "fingers moving, thoughts flowing",
+        "this is the good part",
+        "you didn't blink for a while there",
+        "when the code just writes itself",
+    ],
+    Vibe.GRINDING: [
+        "pounding keys. the code is crying.",
+        "still here. still going.",
+        "hour after hour, line after line",
+        "quiet persistence. won't quit.",
+        "between stubborn and devoted",
+        "this is the part no one sees",
+        "you and the grind understand each other",
+    ],
+    Vibe.BURNOUT_APPROACHING: [
+        "typing cadence like dial-up modem.",
+        "you've been at this for a while",
+        "the screen is still here. so are you.",
+        "maybe the code needs a break too",
+        "future you would appreciate water",
+        "even machines need to cool down",
+        "there is a world outside this window",
+    ],
+    Vibe.SYNTAX_RAGE: [
+        "the compiler isn't attacking you",
+        "you and compiler having a moment",
+        "that backspace key is working hard",
+        "rewriting the same line... again",
+        "always the semicolons. always.",
+        "a rubber duck is worried about you",
+        "delete, retype — the daily ritual",
+    ],
+    Vibe.HELP_SEEKING: [
+        "Stack Overflow tab 14. 2013 code.",
+        "asking the internet for answers",
+        "copy-paste engineering art form",
+        "reading another dev's solution",
+        "pilgrimage to Stack Overflow",
+        "when docs don't have what you need",
+        "googling is a skill. you have it.",
+    ],
+    Vibe.MOUNTING_FRICTION: [
+        "30 window switches in 60s. file 1.",
+        "everything is completely fine.",
+        "code is testing your patience",
+        "wrestling with this for a bit",
+        "it's that kind of day",
+        "breathe. the bug isn't personal.",
+        "the keyboard did nothing wrong",
+    ],
+    Vibe.WANDERING: [
+        "dentist appointment to papal conclave",
+        "just... looking around",
+        "productive procrastination entered",
+        "reorganizing instead of building",
+        "not lost. just scenic route.",
+        "doing everything except the thing",
+        "future you will find this funny",
+    ],
+    Vibe.LOST_IN_SCROLL: [
+        "infinite scroll has you hypnotized.",
+        "just five more mins... 40 mins ago",
+        "the scroll has you now",
+        "came for one thing. wasn't this.",
+        "infinite feed thanks your attention",
+        "somewhere your to-do list cries",
+        "down the rabbit hole comfortably",
+    ],
+    Vibe.TAB_BUTTERFLY: [
+        "47 open tabs. none pay rent today.",
+        "tab tab tab — none the right one",
+        "visiting windows like a diplomat",
+        "can't decide where to be? same.",
+        "browser has 47 tabs. you need 48.",
+        "window shopping, but for windows",
+        "alt-tab: unplanned cardio",
+    ],
+    Vibe.STILLNESS: [
+        "staring at wallpaper. epiphany?",
+        "the screen waits. so do you.",
+        "a pause. nothing wrong with that.",
+        "sometimes best code is no code",
+        "away. being a human for a moment.",
+        "the keyboard rests. it deserves it.",
+        "gone. doing something real, probably.",
+    ],
+    Vibe.MEETING_RECOVERY: [
+        "that meeting could have been an email",
+        "survived another meeting",
+        "that could've been an email",
+        "re-entering reality after 45m nod",
+        "meeting is over. recovery begins.",
+        "back from conference call dimension",
+        "now... where were you before?",
+    ],
+    Vibe.AFTERNOON_DRIFT: [
+        "2:30 PM post-lunch food coma.",
+        "post-lunch autopilot engaged",
+        "afternoon slump asks no permission",
+        "2 PM hits different after lunch",
+        "thinking half speed, fully okay",
+        "the screen is blurry or eyes are",
+        "lunch was worth it though",
+    ],
+}
+
+# Track B: Vihara Dignified Mindfulness Reflections (per dual_track_branding_guide.md §6)
+REFLECTIONS_TRACK_B: dict[Vibe, list[str]] = {
+    Vibe.FLOW_STATE: [
+        "deep work flow. cognitive symmetry.",
+        "focused awareness in optimal resonance.",
+        "sustained flow state protected.",
+        "absorbed in productive clarity.",
+    ],
+    Vibe.GRINDING: [
+        "sustained effort. stretch and hydrate.",
+        "honoring the sustained effort. breathe.",
+        "deep focus observed. pause to ground.",
+        "steady dedication. balance with rest.",
+    ],
+    Vibe.BURNOUT_APPROACHING: [
+        "fatigue signature. rest mental clarity.",
+        "cognitive energy depleting. reset now.",
+        "mental clarity needs stillness. pause.",
+        "gentle reminder: rest restores focus.",
+    ],
+    Vibe.SYNTAX_RAGE: [
+        "syntax friction. step back to observe.",
+        "complexity rising. step back to debug.",
+        "debugging calm: observe syntax error.",
+        "syntax challenge: center and debug.",
+        "compiler friction: pause and observe.",
+    ],
+    Vibe.HELP_SEEKING: [
+        "synthesize question before searching.",
+        "synthesize your question before diving.",
+        "clarity of intent precedes the answer.",
+        "seeking insight with calm discernment.",
+    ],
+    Vibe.MOUNTING_FRICTION: [
+        "attentional turbulence. center breath.",
+        "focus on one atomic hypothesis.",
+        "release agitation. inspect calmly.",
+    ],
+    Vibe.WANDERING: [
+        "attentional drift. recall intention.",
+        "what was your original objective?",
+        "gently returning awareness to purpose.",
+    ],
+    Vibe.LOST_IN_SCROLL: [
+        "passive browsing. awaken to the moment.",
+        "passive browsing loop. awaken now.",
+        "reclaim your attention from the stream.",
+        "a gentle pause. return to focus.",
+    ],
+    Vibe.TAB_BUTTERFLY: [
+        "cognitive fragmentation across tabs.",
+        "fragmented attention across many tabs.",
+        "consolidate your active workspace.",
+        "close unused contexts to free mind.",
+    ],
+    Vibe.STILLNESS: [
+        "quiet contemplation observed.",
+        "quiet contemplation. integrate ideas.",
+        "allow thoughts to integrate naturally.",
+        "a mindful pause in the digital flow.",
+    ],
+    Vibe.MEETING_RECOVERY: [
+        "post-meeting recovery phase.",
+        "give faculties time to decompress.",
+        "decompress after collaboration.",
+        "re-centering after collaborative talk.",
+    ],
+    Vibe.AFTERNOON_DRIFT: [
+        "circadian dip. a short walk restores.",
+        "circadian afternoon dip. a walk helps.",
+        "honor your natural biological rhythm.",
+        "hydrate and take a conscious breath.",
+    ],
+}
+
+# Backward compatibility alias
+REFLECTIONS: dict[Vibe, list[str]] = REFLECTIONS_TRACK_A
+
+
+# ──────────────────────────────────────────────
+# Contextual Reflection Templates
+#
+# Formatted with the active subject (file, video, query, doc, command).
+# ──────────────────────────────────────────────
+
+CONTEXTUAL_TEMPLATES_TRACK_A: dict[Vibe, list[str]] = {
+    Vibe.FLOW_STATE: [
+        "locked into '{subject}'",
+        "flowing in '{subject}'",
+        "in the zone: {subject}",
+        "locked on: {subject}",
+    ],
+    Vibe.GRINDING: [
+        "still on '{subject}'",
+        "hours on '{subject}'",
+        "devoted to '{subject}'",
+        "locked into {subject}",
+    ],
+    Vibe.BURNOUT_APPROACHING: [
+        "{subject} can wait",
+        "break from '{subject}'?",
+        "pause on '{subject}'",
+        "step back: {subject}",
+    ],
+    Vibe.SYNTAX_RAGE: [
+        "glaring at '{subject}'",
+        "rewriting '{subject}'",
+        "you vs '{subject}'",
+        "{subject}: round 5",
+        "battling '{subject}'",
+    ],
+    Vibe.HELP_SEEKING: [
+        "googling '{subject}'",
+        "researching '{subject}'",
+        "seeking fix: {subject}",
+        "docs for '{subject}'",
+    ],
+    Vibe.MOUNTING_FRICTION: [
+        "wrestling '{subject}'",
+        "{subject} resisting",
+        "friction in {subject}",
+        "patience on {subject}",
+    ],
+    Vibe.WANDERING: [
+        "detour into '{subject}'",
+        "wandering in '{subject}'",
+        "detour: {subject}",
+    ],
+    Vibe.LOST_IN_SCROLL: [
+        "watching: {subject}",
+        "lost in '{subject}'",
+        "rabbit hole: {subject}",
+        "hooked on: {subject}",
+    ],
+    Vibe.TAB_BUTTERFLY: [
+        "tab hop: '{subject}'",
+        "fluttering: {subject}",
+        "briefly on: {subject}",
+    ],
+    Vibe.STILLNESS: [
+        "resting on '{subject}'",
+        "paused on '{subject}'",
+    ],
+    Vibe.MEETING_RECOVERY: [
+        "back to '{subject}'",
+        "recovering: {subject}",
+        "post-meeting: {subject}",
+    ],
+    Vibe.AFTERNOON_DRIFT: [
+        "drifting on '{subject}'",
+        "staring at '{subject}'",
+        "autopilot on {subject}",
+    ],
+}
+
+CONTEXTUAL_TEMPLATES_TRACK_B: dict[Vibe, list[str]] = {
+    Vibe.FLOW_STATE: [
+        "focused on '{subject}'",
+        "advancing on '{subject}'",
+        "clarity on '{subject}'",
+    ],
+    Vibe.GRINDING: [
+        "steady focus: {subject}",
+        "progress on '{subject}'",
+        "steady on '{subject}'",
+    ],
+    Vibe.BURNOUT_APPROACHING: [
+        "pause from '{subject}'",
+        "step back: {subject}",
+        "reset mind: {subject}",
+    ],
+    Vibe.SYNTAX_RAGE: [
+        "debugging '{subject}'",
+        "inspecting: {subject}",
+        "calm debugging: {subject}",
+        "{subject}: observe error",
+    ],
+    Vibe.HELP_SEEKING: [
+        "researching '{subject}'",
+        "clarity on '{subject}'",
+        "docs on '{subject}'",
+    ],
+    Vibe.MOUNTING_FRICTION: [
+        "friction in '{subject}'",
+        "centering on '{subject}'",
+        "focus on: {subject}",
+    ],
+    Vibe.WANDERING: [
+        "noticing drift: {subject}",
+        "detour to: {subject}",
+        "evaluating: {subject}",
+    ],
+    Vibe.LOST_IN_SCROLL: [
+        "observing: {subject}",
+        "mindful of: {subject}",
+        "mindful pause: {subject}",
+    ],
+    Vibe.TAB_BUTTERFLY: [
+        "shifting to: {subject}",
+        "visit to: {subject}",
+        "context: {subject}",
+    ],
+    Vibe.STILLNESS: [
+        "pause with '{subject}'",
+        "stillness on '{subject}'",
+    ],
+    Vibe.MEETING_RECOVERY: [
+        "decompress: {subject}",
+        "center after '{subject}'",
+    ],
+    Vibe.AFTERNOON_DRIFT: [
+        "drift in: {subject}",
+        "gentle drift: {subject}",
+        "gentle gaze: {subject}",
+    ],
+}
+
+CONTEXTUAL_TEMPLATES: dict[Vibe, list[str]] = CONTEXTUAL_TEMPLATES_TRACK_A
+
+
+def condense_subject(subject: str, max_chars: int = 16) -> str:
+    """Condense long video or window titles into a short, punchy 2-4 word subject <= max_chars."""
+    if not subject:
+        return ""
+    s = re.sub(r"['\"]", "", subject).strip()
+    if ":" in s:
+        parts = [p.strip() for p in s.split(":") if p.strip()]
+        s = parts[1] if len(parts) > 1 and len(parts[1]) >= 4 else parts[0]
+    elif " - " in s:
+        parts = [p.strip() for p in s.split(" - ") if p.strip()]
+        s = parts[0]
+
+    words = s.split()
+    if len(words) > 4:
+        s = " ".join(words[:4])
+        s = re.sub(r"\s+(?:on|with|and|in|at|of|to|for|from|by|about|the|a|an)$", "", s, flags=re.IGNORECASE)
+
+    if len(s) > max_chars:
+        trimmed = s[:max_chars].rsplit(" ", 1)[0].strip()
+        s = trimmed if trimmed else s[:max_chars].strip()
+    return s.strip()
+
+
+# Track A Video & Short Reflections
+SHORT_VIDEO_REFLECTIONS = [
+    "Invested in: {subject}",
+    "Deep in: {subject}",
+    "Hooked on: {subject}",
+    "Studying: {subject}",
+    "Down the rabbit hole: {subject}",
+    "Essential research: {subject}",
+    "Watching: {subject}",
+]
+
+SHORT_PUNCHY_REFLECTIONS = [
+    "Essential research, obviously.",
+    "Priorities: 10/10.",
+    "Down the rabbit hole.",
+    "The algorithm got you.",
+    "Tasks? Maybe tomorrow.",
+    "Just 5 more minutes...",
+    "Procrastination level: Expert.",
+    "Very important life research.",
+    "Productivity has left the chat.",
+    "Deep in the trance.",
+    "Brain: 'We need to know this.'",
+    "Completely locked in.",
+]
+
+SHORT_SOCIAL_REFLECTIONS = [
+    "The infinite scroll wins again.",
+    "Just one more reel, right?",
+    "Scrolling on pure autopilot.",
+    "The algorithm has you hypnotized.",
+    "Down the feed rabbit hole.",
+    "Quick 2-min break... 30 mins ago.",
+    "Priorities: 10/10.",
+    "Brain: completely empty.",
+]
+
+# Track B Video & Short Reflections (Vihara Dignified Mindfulness)
+SHORT_VIDEO_REFLECTIONS_TRACK_B = [
+    "Observing: {subject}",
+    "Contemplating: {subject}",
+    "Mindful pause: {subject}",
+    "Attentive presence: {subject}",
+    "Viewing: {subject}",
+]
+
+SHORT_PUNCHY_REFLECTIONS_TRACK_B = [
+    "A mindful pause in your day.",
+    "Awaken to the present moment.",
+    "Notice where attention rests.",
+    "Deep breath: return to focus.",
+    "Observe the drift without judgment.",
+    "Honor your natural rhythm.",
+    "Clarity precedes action.",
+    "Ground yourself in the now.",
+]
+
+SHORT_SOCIAL_REFLECTIONS_TRACK_B = [
+    "Passive browsing loop identified.",
+    "Reclaim your attention with calm.",
+    "Awaken to the present moment.",
+    "Gently returning to intention.",
+    "Notice the pull of the feed.",
+    "A quiet breath amidst the stream.",
+]
+
+SHORT_SOCIAL_CONTEXTUAL = [
+    "Scrolling: {subject}",
+    "Feed trance: {subject}",
+    "Reels hook: {subject}",
+    "Lost in: {subject}",
+]
+
+SHORT_SOCIAL_CONTEXTUAL_TRACK_B = [
+    "Observing feed: {subject}",
+    "Feed loop: {subject}",
+    "Mindful pause: {subject}",
+    "Noticing: {subject}",
+]
+
+
+def get_reflection(vibe: Vibe, context=None, brand_track: str = "vihara") -> str:
+    """
+    Get a short, punchy, effective reflection phrase for the active moment.
+    Keeps reflections under 35-40 characters so they are instant to read
+    and fit comfortably on a single line.
+
+    Supports dual-track brand architecture:
+      - 'vihara' (Track B): Stoic, dignified mindfulness copy.
+      - 'bihari' (Track A): Witty, roast, savage humor copy.
+    """
+    is_bihari = str(brand_track).lower() in ("bihari", "consumer", "track_a", "savage")
+    reflections_pool = REFLECTIONS_TRACK_A if is_bihari else REFLECTIONS_TRACK_B
+    context_templates = CONTEXTUAL_TEMPLATES_TRACK_A if is_bihari else CONTEXTUAL_TEMPLATES_TRACK_B
+    short_video = SHORT_VIDEO_REFLECTIONS if is_bihari else SHORT_VIDEO_REFLECTIONS_TRACK_B
+    short_punchy = SHORT_PUNCHY_REFLECTIONS if is_bihari else SHORT_PUNCHY_REFLECTIONS_TRACK_B
+    short_social = SHORT_SOCIAL_REFLECTIONS if is_bihari else SHORT_SOCIAL_REFLECTIONS_TRACK_B
+    short_social_ctx = SHORT_SOCIAL_CONTEXTUAL if is_bihari else SHORT_SOCIAL_CONTEXTUAL_TRACK_B
+
+    refl = None
+
+    if context and getattr(context, "is_specific", False) and getattr(context, "subject", ""):
+        sub = condense_subject(context.subject, max_chars=16)
+        cat = getattr(context, "category", "")
+
+        # Dedicated video reflections (>= 80% inclusion rate target)
+        if cat == "video":
+            if sub and len(sub) >= 3 and random.random() < 0.88:
+                refl = random.choice(short_video).format(subject=sub)
+            else:
+                refl = random.choice(short_punchy)
+
+        # Dedicated social reflections (>= 80% inclusion rate target)
+        elif getattr(context, "is_social", False) and cat == "social":
+            if sub and len(sub) >= 3 and random.random() < 0.88:
+                refl = random.choice(short_social_ctx).format(subject=sub)
+            else:
+                refl = random.choice(short_social)
+
+        # Contextual templates for code/docs/terminal (>= 80% inclusion rate target)
+        elif random.random() < 0.88 and vibe in context_templates:
+            template = random.choice(context_templates[vibe])
+            refl = template.format(subject=sub)
+
+    if not refl:
+        phrases = reflections_pool.get(vibe, ["something is happening"])
+        refl = random.choice(phrases)
+
+    # Hard clamp: 100% adherence to < 40 chars under all conditions
+    if len(refl) >= 40:
+        refl = refl[:36].rstrip() + "..."
+        if len(refl) >= 40:
+            refl = refl[:39]
+
+    return refl
+
+
+
+# ──────────────────────────────────────────────
+# Classification result
+# ──────────────────────────────────────────────
+
+@dataclass
+class VibeResult:
+    """Classification result with provenance tracking."""
+    vibe: Vibe
+    confidence: float
+    source: str  # "rules", "laya", or "laya_fallback"
+
+    def __repr__(self):
+        return f"VibeResult({self.vibe.value}, conf={self.confidence:.2f}, src={self.source})"
+
+
+# ──────────────────────────────────────────────
+# App categories for rule-based classification
+# ──────────────────────────────────────────────
+
+CODE_APPS = frozenset({
+    "code.exe",          # VS Code
+    "devenv.exe",        # Visual Studio
+    "idea64.exe",        # IntelliJ IDEA
+    "pycharm64.exe",     # PyCharm
+    "rider64.exe",       # JetBrains Rider
+    "webstorm64.exe",    # WebStorm
+    "goland64.exe",      # GoLand
+    "sublime_text.exe",  # Sublime Text
+    "notepad++.exe",     # Notepad++
+    "windowsterminal.exe",  # Windows Terminal
+    "powershell.exe",
+    "cmd.exe",
+    "wt.exe",
+    "alacritty.exe",
+    "wezterm-gui.exe",
+    "antigravity.exe",   # Antigravity IDE
+})
+
+BROWSER_APPS = frozenset({
+    "chrome.exe",
+    "msedge.exe",
+    "firefox.exe",
+    "brave.exe",
+    "opera.exe",
+    "vivaldi.exe",
+    "arc.exe",
+})
+
+COMMS_APPS = frozenset({
+    "zoom.exe",
+    "teams.exe",
+    "slack.exe",
+    "discord.exe",
+    "telegram.exe",
+    "whatsapp.exe",
+    "webex.exe",
+})
+
+# ── Title keyword patterns for context detection ──
+
+SOCIAL_KEYWORDS = frozenset({
+    "instagram", "youtube", "tiktok", "twitter", "x.com",
+    "reddit", "facebook", "reels", "shorts", "twitch"
+})
+
+UTILITY_APPS = frozenset({
+    "taskmgr.exe", "explorer.exe", "systemsettings.exe",
+    "regedit.exe"
+})
+
+HELP_SEEKING_KEYWORDS = frozenset({
+    "stackoverflow", "stack overflow", "stackexchange",
+    "github.com/issues", "github issue",
+    "chatgpt", "claude", "gemini", "copilot chat",
+    "docs.", "documentation", "api reference",
+    "how to", "error:", "exception",
+    "geeksforgeeks", "w3schools", "mdn web docs",
+})
+
+MEETING_KEYWORDS = frozenset({
+    "zoom meeting", "teams meeting", "google meet",
+    "microsoft teams", "webex meeting",
+    "screen sharing", "video call",
+})
+
+
+# ──────────────────────────────────────────────
+# Rule-based classifier (instant, zero RAM cost)
+# ──────────────────────────────────────────────
+
+def classify_by_rules(event) -> Optional[VibeResult]:
+    """
+    Deterministic rule engine with 12-vibe classification.
+
+    Returns a VibeResult if confident, or None if the situation is
+    ambiguous and should be deferred to Laya.
+
+    Rules are ordered by specificity (most specific first).
+    Uses app context, typing metrics, title keywords, time-of-day,
+    and extended telemetry signals when available.
+    """
+    app = event.app_name.lower()
+    title = getattr(event, "window_title", "").lower()
+    speed = event.typing_speed          # chars/min in 30s window
+    bs_rate = event.backspace_rate      # backspace / total strokes ratio
+    bs_count = event.backspace_count    # raw backspace count in 30s window
+    switches = event.window_switches_3min
+
+    # Extended signals (graceful fallback for older TelemetryEvent objects)
+    hour = getattr(event, "hour_of_day", -1)
+    session_min = getattr(event, "session_minutes", -1)
+    dwell_min = getattr(event, "dwell_minutes", -1)
+
+    # ── SOCIAL MEDIA: Browsing feeds on Instagram, YouTube, TikTok, Reddit (0% CPU) ──
+    # Prioritized before STILLNESS because watching videos/reels typically has zero keystrokes.
+    if app in BROWSER_APPS and any(kw in title for kw in SOCIAL_KEYWORDS):
+        return VibeResult(Vibe.LOST_IN_SCROLL, 0.92, "rules")
+
+    # ── STILLNESS: no activity at all ──
+    if speed == 0 and switches == 0 and bs_count == 0:
+        return VibeResult(Vibe.STILLNESS, 0.92, "rules")
+
+    # ── STILLNESS: idle heartbeat trigger ──
+    if hasattr(event, "trigger_reason") and event.trigger_reason == "idle_heartbeat":
+        return VibeResult(Vibe.STILLNESS, 0.88, "rules")
+
+    # ── UTILITY / SYSTEM MANAGEMENT ──
+    if app in UTILITY_APPS:
+        return VibeResult(Vibe.WANDERING, 0.65, "rules")
+
+    # ── MEETING_RECOVERY: just came from a comms app ──
+    if app in COMMS_APPS:
+        # User is currently in a meeting — don't show memes during meetings.
+        return None
+    # Check title for meeting keywords when in any app
+    if any(kw in title for kw in MEETING_KEYWORDS):
+        return None  # In a meeting — don't interrupt
+
+    # ── HELP_SEEKING: browser with help-seeking title keywords ──
+    if app in BROWSER_APPS and any(kw in title for kw in HELP_SEEKING_KEYWORDS):
+        conf = 0.80 if speed < 15 else 0.65  # Reading docs vs. actively typing in search
+        return VibeResult(Vibe.HELP_SEEKING, conf, "rules")
+
+    # ── SYNTAX_RAGE: coding app + high backspace ratio + active typing ──
+    if app in CODE_APPS and bs_rate > 0.30 and speed > 20:
+        conf = min(0.95, 0.70 + bs_rate)
+        return VibeResult(Vibe.SYNTAX_RAGE, conf, "rules")
+
+    # ── MOUNTING_FRICTION: coding app + moderate backspace + rising frustration ──
+    if app in CODE_APPS and 0.18 < bs_rate <= 0.30 and speed > 15:
+        return VibeResult(Vibe.MOUNTING_FRICTION, 0.70, "rules")
+
+    # ── FLOW_STATE: coding app + fast typing + low errors + sustained dwell ──
+    if app in CODE_APPS and speed > 50 and bs_rate < 0.12:
+        conf = 0.88 if dwell_min > 10 else 0.82
+        return VibeResult(Vibe.FLOW_STATE, conf, "rules")
+
+    # ── FLOW_STATE: coding app + moderate typing + very low errors ──
+    if app in CODE_APPS and speed > 25 and bs_rate < 0.08:
+        return VibeResult(Vibe.FLOW_STATE, 0.70, "rules")
+
+    # ── GRINDING: coding app + long session + moderate pace ──
+    if app in CODE_APPS and session_min > 90 and speed > 10:
+        return VibeResult(Vibe.GRINDING, 0.72, "rules")
+
+    # ── BURNOUT_APPROACHING: very long session + declining pace ──
+    if session_min > 180 and speed < 20 and speed > 0:
+        return VibeResult(Vibe.BURNOUT_APPROACHING, 0.75, "rules")
+
+    # ── AFTERNOON_DRIFT: post-lunch hours + slow activity ──
+    if 13 <= hour <= 15 and speed < 15 and speed > 0 and switches < 3:
+        return VibeResult(Vibe.AFTERNOON_DRIFT, 0.68, "rules")
+
+    # ── TAB_BUTTERFLY: very rapid context switching ──
+    if switches > 10 and speed < 15:
+        return VibeResult(Vibe.TAB_BUTTERFLY, 0.78, "rules")
+
+    # ── WANDERING: moderate switching + browser + low typing ──
+    if switches > 5 and app in BROWSER_APPS and speed < 20:
+        return VibeResult(Vibe.WANDERING, 0.68, "rules")
+
+    # ── WANDERING: rapid switching + low output ──
+    if switches > 8 and speed < 15:
+        return VibeResult(Vibe.WANDERING, 0.72, "rules")
+
+    # ── LOST_IN_SCROLL: browser + minimal typing + high dwell ──
+    if app in BROWSER_APPS and speed < 10 and bs_rate < 0.05:
+        if dwell_min > 5:
+            return VibeResult(Vibe.LOST_IN_SCROLL, 0.80, "rules")
+        else:
+            return VibeResult(Vibe.WANDERING, 0.60, "rules")
+
+    # ── CODE DEFAULT: steady coding/editing ──
+    if app in CODE_APPS:
+        return VibeResult(Vibe.FLOW_STATE if dwell_min > 5 else Vibe.GRINDING, 0.70, "rules")
+
+    # ── GENERAL BROWSER ──
+    if app in BROWSER_APPS:
+        return VibeResult(Vibe.LOST_IN_SCROLL if dwell_min > 3 else Vibe.WANDERING, 0.65, "rules")
+
+    # ── GRINDING: any app + sustained moderate work ──
+    if app in CODE_APPS and speed > 10 and bs_rate < 0.20:
+        return VibeResult(Vibe.GRINDING, 0.60, "rules")
+
+    # Ambiguous — can't confidently classify with rules alone
+    return None
+
+
+def is_flow_gate_suppressed(event: Any, result: Optional[VibeResult] = None) -> bool:
+    """
+    Contract F1: Flow State Zero-Interruption Gate.
+    Suppresses 100% of toasts when the user is in sustained, high-velocity flow:
+    typing > 50 chars/min, backspace rate < 8% (0.08), and dwell >= 10.0 minutes.
+    """
+    if result is not None and result.vibe != Vibe.FLOW_STATE:
+        return False
+    if result is None:
+        res = classify_by_rules(event)
+        if res is None or res.vibe != Vibe.FLOW_STATE:
+            return False
+    return (
+        getattr(event, "typing_speed", 0.0) > 50.0
+        and getattr(event, "backspace_rate", 1.0) < 0.08
+        and getattr(event, "dwell_minutes", 0.0) >= 10.0
+    )
+
+
+# ──────────────────────────────────────────────
+# Laya-based classifier (lazy-loaded, cached)
+# ──────────────────────────────────────────────
+
+class LayaBridge:
+    """
+    Wraps the Laya System 1 decision engine for ambiguous classification
+    and semantic context understanding.
+
+    Uses Agent('convaiinnovations/laya') for fast, calibrated non-autoregressive
+    inference. Includes in-memory title caching so subsequent ticks on the same
+    video or page cost 0ms and zero CPU.
+    """
+
+    def __init__(self):
+        self._agent = None
+        self._available = None  # None = not checked, True/False = checked
+        self._title_cache: dict[tuple[str, str], dict] = {}
+
+    def is_available(self) -> bool:
+        """Check if Laya is installed without loading the model into RAM."""
+        if self._available is None:
+            try:
+                import laya.agent  # noqa: F401
+                self._available = True
+            except ImportError:
+                self._available = False
+                logger.warning(
+                    "Laya is not installed. Using rule-based classification only. "
+                    "Install with: pip install laya"
+                )
+        return self._available
+
+    def _ensure_loaded(self):
+        """Load the model weights on first ambiguous event or context request."""
+        if self._agent is None:
+            try:
+                logger.info("Loading Laya Agent ('convaiinnovations/laya')...")
+                try:
+                    import torch
+                    torch.set_num_threads(min(2, os.cpu_count() or 2))
+                except Exception:
+                    pass
+                from laya.agent import Agent
+                self._agent = Agent("convaiinnovations/laya")
+                logger.info("Laya Agent loaded successfully.")
+            except Exception as e:
+                logger.warning(f"Failed to load Laya Agent (running in offline/rules fallback): {e}")
+                self._agent = None
+                self._available = False
+
+    def classify_context(self, app_name: str, window_title: str) -> dict:
+        """
+        Classify a window title into an activity vibe and optimal meme search category.
+        Results are cached per (app, title) so a 15-minute video only runs once.
+        """
+        if not window_title or not self.is_available():
+            return {"activity": None, "meme_category": None}
+
+        cache_key = (app_name.lower(), window_title.strip())
+        if cache_key in self._title_cache:
+            return self._title_cache[cache_key]
+
+        try:
+            self._ensure_loaded()
+            state = {
+                "title": window_title,
+                "app": app_name,
+            }
+            schema = {
+                "activity": {
+                    "type": "choice",
+                    "instructions": "Classify the user activity and mental vibe from this window context.",
+                    "criteria": [
+                        "coding", "learning", "gaming", "entertainment", "social_scroll", "deep_rabbit_hole"
+                    ]
+                },
+                "meme_category": {
+                    "type": "choice",
+                    "instructions": "What general meme search category will find the most relatable visual reaction meme for this context?",
+                    "criteria": [
+                        "programming", "bugs", "gaming", "existential", "tired", "doomscrolling", "shocked", "confused", "rabbit_hole"
+                    ]
+                }
+            }
+            res = self._agent.predict(state, schema)
+            act = res.get("answers", {}).get("activity", {}).get("choice")
+            cat = res.get("answers", {}).get("meme_category", {}).get("choice")
+            out = {"activity": act, "meme_category": cat}
+
+            # Bounded LRU cache (keep last 200 titles)
+            if len(self._title_cache) > 200:
+                self._title_cache.clear()
+            self._title_cache[cache_key] = out
+            return out
+        except Exception as e:
+            logger.warning(f"Laya context classification failed: {e}")
+            return {"activity": None, "meme_category": None}
+
+    def classify(self, event) -> VibeResult:
+        """Classify ambiguous behavioral telemetry using the Laya decision model."""
+        if not self.is_available():
+            return VibeResult(Vibe.WANDERING, 0.35, "laya_unavailable")
+
+        try:
+            self._ensure_loaded()
+            if self._agent is None:
+                return VibeResult(Vibe.STILLNESS, 0.30, "laya_fallback")
+
+            # Build compact telemetry state description for Laya
+            state = {
+                "context": (
+                    f"Application: '{event.app_name}'. Window: '{event.window_title}'. "
+                    f"Typing speed: {event.typing_speed} chars/min. "
+                    f"Backspace rate: {event.backspace_rate:.0%}. "
+                    f"Window switches (3min): {event.window_switches_3min}."
+                )
+            }
+
+            # Define calibrated decision schema
+            schema = {
+                "vibe": {
+                    "type": "choice",
+                    "instructions": (
+                        "Classify the user's current behavioral vibe. Choose the most fitting state:\n"
+                        "- FLOW_STATE: Productive flow, steady typing, low errors.\n"
+                        "- GRINDING: Sustained work over a long session.\n"
+                        "- BURNOUT_APPROACHING: Declining energy and speed.\n"
+                        "- SYNTAX_RAGE: Frustrated while coding, lots of backspaces.\n"
+                        "- HELP_SEEKING: Searching docs, Stack Overflow, or tutorials.\n"
+                        "- MOUNTING_FRICTION: Moderate frustration or obstacles.\n"
+                        "- WANDERING: Aimlessly switching between apps or browsing.\n"
+                        "- LOST_IN_SCROLL: Mindlessly consuming feeds, minimal input.\n"
+                        "- TAB_BUTTERFLY: Rapid switching across many tabs/windows.\n"
+                        "- STILLNESS: Idle or away from keyboard.\n"
+                        "- MEETING_RECOVERY: Recovering after a call.\n"
+                        "- AFTERNOON_DRIFT: Post-lunch energy dip."
+                    ),
+                    "criteria": [v.value for v in Vibe],
+                }
+            }
+
+            result = self._agent.predict(state, schema)
+            choice = result["answers"]["vibe"]["choice"]
+            confidence = result["answers"]["vibe"]["confidence"]
+            return VibeResult(Vibe(choice), confidence, "laya")
+        except Exception as e:
+            logger.warning(f"Laya inference failed: {e}")
+            return VibeResult(Vibe.STILLNESS, 0.30, "laya_fallback")
+
+    def classify_screen_content(self, screen_text: str, app_name: str, window_title: str) -> dict:
+        """
+        Classify in-the-moment on-screen text (from OCR) into a compassionate mindfulness theme,
+        reaction emotion, corresponding Vibe, and gentle reflection phrase.
+        """
+        if not screen_text or not self.is_available():
+            return {}
+
+        try:
+            self._ensure_loaded()
+            if self._agent is None:
+                return {}
+        except Exception as e:
+            logger.warning(f"Laya loading failed: {e}")
+            return {}
+
+        state = {
+            "context": (
+                f"Application: '{app_name}'. Window: '{window_title}'. "
+                f"On-screen text or caption: '{screen_text[:300]}'"
+            )
+        }
+        schema = {
+            "human_theme": {
+                "type": "choice",
+                "instructions": "Determine the theme of the social media post, video, or window content the user is viewing.",
+                "criteria": [
+                    "comedy_and_humor",
+                    "food_and_cooking",
+                    "scenic_views_and_nature",
+                    "music_and_dance",
+                    "sports_and_fitness",
+                    "pop_culture_and_movies",
+                    "wholesome_animals",
+                    "relatable_life_struggles",
+                    "deep_thoughts_philosophy",
+                    "mindless_social_scrolling",
+                ]
+            },
+            "reaction_vibe": {
+                "type": "choice",
+                "instructions": "What visual reaction best mirrors this moment in a funny, relatable way?",
+                "criteria": [
+                    "food_craving",
+                    "jaw_drop_awe",
+                    "side_eye_scrolling",
+                    "vibing_and_grooving",
+                    "laughing_out_loud",
+                    "deep_contemplation",
+                    "mild_disbelief",
+                    "tired_acceptance",
+                    "peaceful_moment",
+                ]
+            }
+        }
+        try:
+            res = self._agent.predict(state, schema)
+            theme = res["answers"]["human_theme"]["choice"]
+            reaction = res["answers"]["reaction_vibe"]["choice"]
+
+            # Semantic alignment guardrails: ensure reaction genuinely mirrors the theme
+            text_lower = screen_text.lower()
+            if theme == "comedy_and_humor" or any(w in text_lower for w in ["prank", "comedy", "joke", "funny", "hilarious", "meme", "couplescomedy"]):
+                if reaction not in ("laughing_out_loud", "mild_disbelief"):
+                    reaction = random.choice(["laughing_out_loud", "mild_disbelief"])
+            elif theme == "pop_culture_and_movies" or any(w in text_lower for w in ["red-carpet", "celebrity", "drama", "hollywood", "actor"]):
+                if reaction not in ("side_eye_scrolling", "jaw_drop_awe", "mild_disbelief"):
+                    reaction = random.choice(["side_eye_scrolling", "jaw_drop_awe"])
+            elif theme == "sports_and_fitness" or any(w in text_lower for w in ["jumping", "fall season", "ziptrek", "workout", "fitness", "stunt"]):
+                if reaction not in ("jaw_drop_awe", "tired_acceptance"):
+                    reaction = "jaw_drop_awe"
+            elif theme == "food_and_cooking":
+                reaction = "food_craving"
+            elif theme == "music_and_dance":
+                reaction = "vibing_and_grooving"
+            elif theme == "deep_thoughts_philosophy":
+                reaction = "deep_contemplation"
+
+            vibe_map = {
+                "comedy_and_humor": Vibe.LOST_IN_SCROLL,
+                "food_and_cooking": Vibe.WANDERING,
+                "scenic_views_and_nature": Vibe.WANDERING,
+                "music_and_dance": Vibe.LOST_IN_SCROLL,
+                "sports_and_fitness": Vibe.LOST_IN_SCROLL,
+                "pop_culture_and_movies": Vibe.LOST_IN_SCROLL,
+                "wholesome_animals": Vibe.STILLNESS,
+                "relatable_life_struggles": Vibe.BURNOUT_APPROACHING,
+                "deep_thoughts_philosophy": Vibe.WANDERING,
+                "mindless_social_scrolling": Vibe.LOST_IN_SCROLL,
+            }
+            mapped_vibe = vibe_map.get(theme, Vibe.LOST_IN_SCROLL)
+
+            # Extract specific subject from OCR text for personalized reflection
+            from .ocr import extract_caption_keywords
+            kw_list = extract_caption_keywords(screen_text)
+            subject_str = kw_list[0] if kw_list else ""
+
+            if subject_str and len(subject_str) >= 3:
+                s_clean = condense_subject(subject_str, max_chars=22)
+                topic_reflections = {
+                    "comedy_and_humor": [
+                        f"Quick chuckle: {s_clean}",
+                        "Essential research, obviously.",
+                        "Priorities: 10/10.",
+                    ],
+                    "food_and_cooking": [
+                        f"Craving: {s_clean}",
+                        "Dangerous temptation.",
+                        "Tasks? Need snacks first.",
+                    ],
+                    "scenic_views_and_nature": [
+                        f"Daydreaming: {s_clean}",
+                        "Scenic detour.",
+                        "Mentally on vacation.",
+                    ],
+                    "music_and_dance": [
+                        f"Vibing to: {s_clean}",
+                        "Caught in the groove.",
+                        "Dancing in your head.",
+                    ],
+                    "sports_and_fitness": [
+                        f"Hyped by: {s_clean}",
+                        "Energy: 100%.",
+                        "Intense focus.",
+                    ],
+                    "pop_culture_and_movies": [
+                        f"Invested in: {s_clean}",
+                        "Down the lore rabbit hole.",
+                        "Essential drama.",
+                    ],
+                    "wholesome_animals": [
+                        f"Blessed by: {s_clean}",
+                        "Distracted by cuteness.",
+                        "Important animal research.",
+                    ],
+                    "deep_thoughts_philosophy": [
+                        f"Contemplating: {s_clean}",
+                        "Down the rabbit hole.",
+                        "Deep thoughts hour.",
+                    ],
+                    "relatable_life_struggles": [
+                        f"Hits home: {s_clean}",
+                        "Too relatable.",
+                        "Felt that in my soul.",
+                    ],
+                    "mindless_social_scrolling": [
+                        f"Hooked on: {s_clean}",
+                        "Just one more reel...",
+                        "The scroll wins again.",
+                    ],
+                }
+                if theme in topic_reflections:
+                    reflection = random.choice(topic_reflections[theme])
+                else:
+                    reflection = f"Detour: {s_clean}"
+            else:
+                phrases = MINDFUL_THEME_REFLECTIONS.get(theme, [
+                    "A little detour.",
+                    "The scroll wins again.",
+                    "Just 5 more minutes...",
+                ])
+                reflection = random.choice(phrases)
+
+            # High-entropy visual emotion reaction query pools
+            reaction_query_pools = {
+                "food_craving": ["drooling", "hungry cat", "chef kiss", "looking at food", "mouth watering", "snack craving"],
+                "jaw_drop_awe": ["jaw dropped", "daydreaming", "staring in awe", "looking out window", "blown away", "mesmerized cat"],
+                "side_eye_scrolling": ["side eye", "monkey puppet looking away", "caught staring", "blank stare", "cat staring", "dog judging"],
+                "vibing_and_grooving": ["cat vibing", "grooving", "head bob", "dancing cat", "headphones vibing", "bopping head", "swaying cat", "chill groove"],
+                "laughing_out_loud": ["laughing", "wheezing", "snicker", "smirk", "crying laughing", "giggling dog", "cracking up", "spit take"],
+                "deep_contemplation": ["thinking monkey", "galaxy brain", "contemplating", "philosophical stare", "staring ceiling", "pondering dog"],
+                "mild_disbelief": ["squinting", "confused stare", "double take", "raised eyebrow", "shocked dog", "disbelief cat", "wait what"],
+                "tired_acceptance": ["facepalm", "tired dog", "exhausted", "deflated", "sigh cat", "lying on floor"],
+                "peaceful_moment": ["peaceful cat", "chilling dog", "zen", "cozy blanket", "sleeping otter", "pure peace"],
+            }
+
+            pool = reaction_query_pools.get(reaction, ["side eye", "smirk", "stare"])
+            # Pick a random term from the pool for maximum variety
+            search_term = random.choice(pool)
+
+            return {
+                "human_theme": theme,
+                "reaction_vibe": reaction,
+                "meme_subject": subject_str or theme.replace("_", " "),
+                "search_queries": [search_term],
+                "vibe": mapped_vibe,
+                "reflection": reflection,
+                "screen_text": screen_text,
+            }
+        except Exception as e:
+            logger.warning(f"Laya screen content classification failed: {e}")
+            return {}
+
+
+MINDFUL_THEME_REFLECTIONS = {
+    "comedy_and_humor": [
+        "a little comedy detour in the middle of the day. enjoy the laugh.",
+        "scrolling through the absurdities of the internet. just smiling.",
+        "pure internet nonsense. nothing wrong with a quick chuckle.",
+    ],
+    "scenic_views_and_nature": [
+        "a brief visual escape to somewhere else in the world.",
+        "enjoying the view from your chair. take a breath.",
+        "a little window of nature in the middle of screen time.",
+    ],
+    "mindless_social_scrolling": [
+        "caught in the infinite clip stream. just noticing.",
+        "letting the feed wash over you for a moment.",
+        "pure digital distraction. take a breath.",
+    ],
+    "wholesome_animals": [
+        "wholesome bandwidth. sometimes a quiet smile is all you need.",
+        "little moments of animal joy. soak it in.",
+        "a gentle pause in the stream.",
+    ],
+    "bargaining_with_time": [
+        "the classic bargain with tomorrow-you. no rush, just notice it.",
+        "caught in the 'just one more' loop. take a deep breath.",
+        "negotiating with time. you already know how this ends, and that's okay.",
+    ],
+    "relatable_exhaustion": [
+        "scrolling on empty. maybe the body needs real rest, not just quiet sitting.",
+        "letting the screen carry your thoughts for a moment.",
+        "pure low-battery mode. be gentle with yourself right now.",
+    ],
+    "technical_debugging_struggle": [
+        "staring at the logic like it personally offended you.",
+        "the code is stubborn, but so are you. step back for 30 seconds.",
+        "a deep breath before the next stack trace.",
+    ],
+    "self_improvement_trap": [
+        "consuming advice about living instead of just living. notice the irony.",
+        "optimizing the routine while the present moment waits patiently.",
+        "you don't need to fix everything right this second.",
+    ],
+    "curiosity_rabbit_hole": [
+        "down the rabbit hole we go. fascinating detour.",
+        "wondering about the world. nice to be curious.",
+        "the scenic route through human knowledge.",
+    ],
+}
+
+
+# ──────────────────────────────────────────────
+# Hybrid classifier (public API)
+# ──────────────────────────────────────────────
+
+class VibeClassifier:
+    """
+    Hybrid classifier: rules first, Laya for ambiguous cases.
+
+    This is the primary classification interface.
+    """
+
+    def __init__(self, use_laya: bool = True):
+        """
+        Args:
+            use_laya: If True, load Laya as fallback for ambiguous cases.
+                      If False, use pure rule-based classification.
+        """
+        self.use_laya = use_laya
+        self.laya_bridge = LayaBridge() if use_laya else None
+
+    def classify_context(self, app_name: str, window_title: str) -> dict:
+        """Helper to get Laya's semantic classification of the current window."""
+        if self.laya_bridge and self.laya_bridge.is_available():
+            return self.laya_bridge.classify_context(app_name, window_title)
+        return {"activity": None, "meme_category": None}
+
+    def classify_screen_content(self, screen_text: str, app_name: str, window_title: str) -> dict:
+        """Helper to classify on-screen OCR content into mindfulness theme & reflection."""
+        if self.laya_bridge and self.laya_bridge.is_available():
+            return self.laya_bridge.classify_screen_content(screen_text, app_name, window_title)
+        return {}
+
+    def classify(self, event, allow_laya: bool = True) -> VibeResult:
+        """
+        Classify a TelemetryEvent into a Vibe.
+
+        Steps:
+          1. Try deterministic rules (instant, 0% CPU)
+          2. If ambiguous, Laya enabled, allow_laya=True, and not on routine dwell_tick: run Laya
+          3. Default fallback (0% CPU)
+        """
+        # Step 1: Rules
+        result = classify_by_rules(event)
+        if result is not None:
+            logger.debug(f"Rules classified: {result}")
+            return result
+
+        # Step 2: Laya (never run on routine dwell_tick or when cooldown is active)
+        trigger = getattr(event, "trigger_reason", "")
+        if allow_laya and trigger != "dwell_tick" and self.laya_bridge and self.laya_bridge.is_available():
+            result = self.laya_bridge.classify(event)
+            logger.debug(f"Laya classified: {result}")
+            return result
+
+        # Step 3: Fast default fallback (0% CPU)
+        app = event.app_name.lower()
+        title = getattr(event, "window_title", "").lower()
+        if app in BROWSER_APPS and any(kw in title for kw in SOCIAL_KEYWORDS):
+            return VibeResult(Vibe.LOST_IN_SCROLL, 0.85, "rules_default")
+        return VibeResult(Vibe.WANDERING, 0.40, "rules_default")

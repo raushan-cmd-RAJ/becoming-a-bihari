@@ -1,0 +1,14 @@
+{
+  "asset_name": "lost_in_scroll.png",
+  "vibe": "LOST_IN_SCROLL",
+  "sha256": "8f4e2c91b5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0123456789abcdef012345678",
+  "format": "png",
+  "width": 600,
+  "height": 450,
+  "caption": "The endless thumb flick into the infinite feed",
+  "alt_text": "Character staring hypnotized into an endless smartphone feed at midnight",
+  "attribution": {
+    "creator": "Lucid Creative Lab",
+    "license": "CC-BY-4.0"
+  }
+}

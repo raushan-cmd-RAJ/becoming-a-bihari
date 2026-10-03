@@ -1,0 +1,78 @@
+# Vihara / Becoming a Bihari — Configuration
+# A mindful mirror, not a productivity judge.
+
+[general]
+# Brand track: "vihara" (dignified stoic focus catalyst) or "bihari" (savage roast mirror)
+brand_track = "vihara"
+
+# How often to check the foreground window (milliseconds)
+poll_interval_ms = 500
+
+# Minimum seconds between reflections (prevents overwhelming)
+meme_cooldown_seconds = 300
+
+# Faster reflection cadence while on social media / YouTube to disrupt scrolling trance
+social_cooldown_seconds = 60
+
+# Stop polling inference after this many seconds of no activity
+idle_timeout_seconds = 300
+
+[paths]
+# Leave empty to use default: %LOCALAPPDATA%\Bihari\memes
+meme_dir = ""
+
+[privacy]
+# Apps whose window titles are ALWAYS masked (exact exe name, case-insensitive)
+blocked_apps = ["KeePassXC.exe", "1Password.exe", "Bitwarden.exe"]
+
+# Title substrings that trigger masking (case-insensitive substring match)
+# Add your own bank names, sensitive sites, etc.
+blocked_title_keywords = [
+    "bank",
+    "sign in",
+    "login",
+    "checkout",
+    "password",
+    "credit card",
+    "payment",
+    "connexion",
+    "iniciar sesión",
+]
+
+# Do NOT clear clipboard — only mask telemetry. Set true at your own risk.
+clear_clipboard = false
+
+[inference]
+# Use Laya model for ambiguous cases (true = hybrid, false = rules only)
+use_laya = true
+
+# Minimum confidence to trigger a meme display
+# Laya has calibrated probabilities, so 0.55 is meaningful
+confidence_threshold = 0.55
+
+[display]
+# How long the meme overlay stays on screen (milliseconds)
+duration_ms = 4000
+
+# Window opacity (0.0 transparent - 1.0 opaque)
+opacity = 0.95
+
+# Overlay dimensions in pixels
+width = 380
+height = 320
+
+# Smooth slide-in animation from bottom of screen
+slide_animation = true
+
+[fetcher]
+# Enable online meme fetching from Reddit (opt-in — disabled by default)
+# When enabled, seeds local folders from public subreddits on first launch
+# or when a vibe folder has fewer than 'min_threshold' images.
+# Runtime stays fully offline — this only pre-downloads images to disk.
+online_fetch = true
+
+# Minimum images per vibe folder before auto-fetching kicks in
+min_threshold = 20
+
+# How many memes to download per vibe category
+target_count = 25
