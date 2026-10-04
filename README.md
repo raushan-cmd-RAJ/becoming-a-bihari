@@ -29,6 +29,7 @@ You can switch between tracks at any time directly from the system tray menu.
 - **🔄 Zero-Repetition Engine** — Reinforced by a **60-event sliding window LRU cache**. Even across long sessions, you won't see repetitive reaction memes.
 - **📦 Extensible `.lucidpack` Architecture** — Ships with a default curated pack of **120 unique reaction images** (10 for each of the 12 vibes) verified with unique cryptographic SHA-256 hashes. Supports hot-reloading custom community packs by dropping `.lucidpack` files into the packs directory.
 - **👁️ Lightweight Screen Context** — Native Windows Media OCR (<30ms) extracts in-the-moment video titles and feed topics without sending pixels or text to any cloud servers.
+- **⏱️ Dwell-Time Vibe Determination** — Integrates `DwellTracker` to monitor exact window and application dwell time, driving vibe transitions across calibrated curves (social glance vs. trance, coding immersion vs. grind) and generating blissful, dwell-aware reflections under 40 characters.
 - **🧠 Hybrid Deterministic & AI Inference** — Zero-CPU deterministic rule engine paired with an optional on-device decision model for ambiguous states.
 
 ---
@@ -109,6 +110,7 @@ brand_track = "vihara"            # "vihara" (mindful) or "bihari" (savage roast
 poll_interval_ms = 500
 meme_cooldown_seconds = 300       # Work session cooldown (5 minutes)
 social_cooldown_seconds = 60      # Social/video trance cooldown (1 minute)
+never_repeat = true               # Permanent Zero-Repeat: never show the same meme twice ever
 
 [privacy]
 blocked_apps = ["KeePassXC.exe", "1Password.exe", "Bitwarden.exe"]
@@ -143,10 +145,12 @@ auto_reload = true
 ├────────────────────────────────────────────────────────────────────────┤
 │  Inference & Reflection Engine (inference.py)                          │
 │  ├── Flow State Shield: Suppresses alerts during high-velocity work   │
+│  ├── Dwell-Time Vibe Tracker: Objective, non-judgmental presence mirror│
 │  └── Vibe Classifier: 12 vibes + contextual captions (<40 chars)       │
 ├────────────────────────────────────────────────────────────────────────┤
-│  Pack Engine (packs.py, memes.py)                                      │
-│  └── .lucidpack loader + 60-event LRU deduplication window             │
+│  Pack & Deduplication Engine (packs.py, memes.py, logger.py)           │
+│  ├── .lucidpack loader + cross-vibe dynamic candidate pool             │
+│  └── Permanent Zero-Repeat: Canonical ID & SHA-256 lifetime SQLite log │
 ├────────────────────────────────────────────────────────────────────────┤
 │  System Tray Service (tray.py)                                         │
 │  └── Background tray icon + brand toggle + hotkey controls             │

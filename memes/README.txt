@@ -14,7 +14,7 @@ matching subfolder:
     mounting-friction/    — "everything is fine" energy
 
   😴 Avoidance:
-    just-wandering/       — doing everything except the thing
+    just-wandering/       — scenic detour in thought
     lost-in-the-scroll/   — deep in the infinite feed
     tab-butterfly/        — 47 tabs, none of them right
 

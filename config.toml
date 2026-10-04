@@ -17,6 +17,9 @@ social_cooldown_seconds = 60
 # Stop polling inference after this many seconds of no activity
 idle_timeout_seconds = 300
 
+# Strict lifetime zero-repeat mode: never show a meme twice ever again
+never_repeat = true
+
 [paths]
 # Leave empty to use default: %LOCALAPPDATA%\Bihari\memes
 meme_dir = ""

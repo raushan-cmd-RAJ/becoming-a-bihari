@@ -127,6 +127,7 @@ def main():
         cooldown_seconds=cfg["general"]["meme_cooldown_seconds"],
         history_db=db_path,
         pack_manager=pack_manager,
+        never_repeat=cfg.get("general", {}).get("never_repeat", True),
     )
 
     # Log meme inventory
@@ -147,6 +148,7 @@ def main():
             meme_dir=meme_dir,
             min_threshold=fetcher_cfg.get("min_threshold", 3),
             target_count=fetcher_cfg.get("target_count", 10),
+            seen_ids=retriever.seen_ids,
         )
 
     # ── Initialize Module 4: THE DISPLAY ENGINE ──
@@ -213,6 +215,7 @@ def main():
             min_threshold=0,
             target_count=fetcher_cfg.get("target_count", 10),
             force=True,
+            seen_ids=retriever.seen_ids,
         )
 
     def handle_test_meme():
@@ -233,8 +236,15 @@ def main():
         # If on social media with a clean search query, try live search first for the test
         if test_ctx and test_ctx.is_social and test_ctx.search_query:
             logger.info(f"📱 Testing live search for '{test_ctx.search_query}'...")
-            live = search_live_contextual_meme(test_ctx.search_query, meme_dir)
+            live = search_live_contextual_meme(
+                test_ctx.search_query,
+                meme_dir,
+                recent_memes=retriever._recent,
+                seen_ids=retriever.seen_ids,
+                seen_hashes=retriever.seen_hashes,
+            )
             if live:
+                retriever.record_shown(time.time(), live)
                 label = get_reflection(Vibe.LOST_IN_SCROLL, context=test_ctx, brand_track=current_track["value"])
                 root.after(0, lambda p=live, l=label: overlay.show(p, l, vibe=Vibe.LOST_IN_SCROLL, brand_track=current_track["value"]))
                 logger.info(f"Showing live test meme: {live.name} for '{test_ctx.search_query}'")
@@ -343,7 +353,7 @@ def main():
                 now = time.time()
 
                 # Extract clean in-the-moment context from active window (regex/string, <0.01ms)
-                ctx = extract_context(event.app_name, event.window_title)
+                ctx = extract_context(event.app_name, event.window_title, dwell_minutes=getattr(event, "dwell_minutes", 0.0))
                 is_social = bool(ctx and ctx.is_social)
                 eligible_cooldown = social_cooldown if is_social else work_cooldown
                 last_time = last_social_meme_time if is_social else retriever._last_shown_time
@@ -378,10 +388,16 @@ def main():
                         custom_reflection = None
 
                         # ── 1. In-The-Moment Screen Context Extraction (Lightweight Native OCR) ──
-                        # Only run OCR when title context is NOT already specific (e.g. Instagram Reels or generic feeds).
-                        # YouTube videos, code files, and docs already have clean, 100% authoritative titles.
+                        # Only run OCR when on social feeds / short-form reels where the window title is generic
+                        # (e.g. Instagram Reels, TikTok, YouTube Shorts feeds).
+                        # Never run social OCR on productivity, email, coding, articles, or non-social web browsing.
                         hwnd = getattr(event, "hwnd", 0)
-                        should_ocr = not (ctx and getattr(ctx, "is_specific", False) and getattr(ctx, "category", "") in ("video", "code", "docs"))
+                        is_social_feed = is_social or any(
+                            s in event.window_title.lower() for s in ["instagram", "tiktok", "reels", "shorts", "twitter", "x.com"]
+                        )
+                        should_ocr = is_social_feed and not (
+                            ctx and getattr(ctx, "is_specific", False) and getattr(ctx, "category", "") in ("video", "code", "docs", "email", "reading")
+                        )
                         if hwnd and should_ocr and ocr_extractor.is_available():
                             ocr_text = ocr_extractor.extract_text(hwnd, event.app_name)
                             if ocr_text:
@@ -399,7 +415,9 @@ def main():
                                     live_meme = search_live_contextual_meme(
                                         search_queries,
                                         meme_dir,
-                                        recent_memes=retriever._recent
+                                        recent_memes=retriever._recent,
+                                        seen_ids=retriever.seen_ids,
+                                        seen_hashes=retriever.seen_hashes,
                                     )
                                     if live_meme:
                                         meme_path = live_meme
@@ -424,7 +442,9 @@ def main():
                                 live_meme = search_live_contextual_meme(
                                     queries,
                                     meme_dir,
-                                    recent_memes=retriever._recent
+                                    recent_memes=retriever._recent,
+                                    seen_ids=retriever.seen_ids,
+                                    seen_hashes=retriever.seen_hashes,
                                 )
                                 if live_meme:
                                     meme_path = live_meme
@@ -440,7 +460,7 @@ def main():
 
                         if meme_path:
                             meme_shown = meme_path.name
-                            label = custom_reflection if custom_reflection else get_reflection(result.vibe, context=ctx, brand_track=current_track["value"])
+                            label = custom_reflection if custom_reflection else get_reflection(result.vibe, context=ctx, brand_track=current_track["value"], dwell_minutes=getattr(event, "dwell_minutes", None))
                             logger.info(
                                 f"🎯 {result} (ctx={ctx.subject if ctx else 'none'}) → showing {meme_path.name}"
                             )
@@ -451,7 +471,7 @@ def main():
                             )
                         else:
                             # Dignified text-only reflection card fallback when no meme image exists
-                            label = custom_reflection if custom_reflection else get_reflection(result.vibe, context=ctx, brand_track=current_track["value"])
+                            label = custom_reflection if custom_reflection else get_reflection(result.vibe, context=ctx, brand_track=current_track["value"], dwell_minutes=getattr(event, "dwell_minutes", None))
                             logger.info(
                                 f"🎯 {result} (ctx={ctx.subject if ctx else 'none'}) → showing text reflection card (no meme image)"
                             )

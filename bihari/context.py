@@ -24,6 +24,7 @@ class WindowContext:
     is_specific: bool   # True if high-confidence specific subject, False if generic
     is_social: bool = False       # True if on YouTube, Reddit, Twitter/X, Instagram, etc.
     search_query: str = ""        # Cleaned search term optimized for live meme query
+    dwell_minutes: float = 0.0    # Continuous dwell time in active window/app in minutes
 
 
 # Generic/noisy titles that provide zero useful context
@@ -421,34 +422,56 @@ def extract_browser_context(app: str, title: str) -> Optional[WindowContext]:
         if len(so_title) >= 4:
             return WindowContext(subject=so_title[:55], category="docs", is_specific=True, search_query=extract_clean_search_query(so_title))
 
-    # 7. GitHub: "Pull Request #123 · repo" or "user/repo"
-    if "github" in cleaned.lower():
-        gh_title = re.sub(r"\s*[-·|]\s*GitHub.*$", "", cleaned, flags=re.IGNORECASE)
+    # 7. GitHub / GitLab / Bitbucket
+    if any(g in cleaned.lower() for g in ["github", "gitlab", "bitbucket"]):
+        gh_title = re.sub(r"\s*[-·|•]\s*(?:GitHub|GitLab|Bitbucket).*$", "", cleaned, flags=re.IGNORECASE)
         gh_title = _clean_str(gh_title)
-        if len(gh_title) >= 3:
-            return WindowContext(subject=gh_title[:50], category="code", is_specific=True)
+        if not gh_title or gh_title.lower() in ("github", "gitlab", "bitbucket"):
+            subject = "GitHub" if "github" in cleaned.lower() else "Code Repository"
+        else:
+            subject = gh_title[:50]
+        return WindowContext(subject=subject, category="code", is_specific=True, is_social=False)
 
-    # 8. Wikipedia: "Quantum mechanics - Wikipedia"
+    # 8. Webmail & Messaging: Gmail, Outlook, ProtonMail, Fastmail, Yahoo Mail
+    if any(m in cleaned.lower() for m in ["gmail", "google mail", "mail.google", "outlook", "protonmail", "fastmail", "yahoo mail", "webmail"]):
+        mail_title = re.sub(r"\s*[-—|•]\s*(?:Gmail|Outlook|ProtonMail|Google Chrome|Microsoft Edge).*$", "", cleaned, flags=re.IGNORECASE)
+        mail_title = re.sub(r"^\(\d+\)\s*", "", mail_title)  # Strip unread badge (e.g. (3))
+        mail_title = _clean_str(mail_title)
+        if not mail_title or mail_title.lower() in ("inbox", "gmail", "mail", "sent", "drafts", "google mail"):
+            subject = "Gmail" if "gmail" in cleaned.lower() else "Email"
+        else:
+            subject = f"Email: {mail_title[:35]}"
+        return WindowContext(subject=subject, category="email", is_specific=True, is_social=False)
+
+    # 9. Wikipedia: "Quantum mechanics - Wikipedia"
     if "wikipedia" in cleaned.lower():
         wiki_title = re.sub(r"\s*-\s*Wikipedia.*$", "", cleaned, flags=re.IGNORECASE)
         wiki_title = _clean_str(wiki_title)
         if len(wiki_title) >= 3:
-            return WindowContext(subject=wiki_title[:50], category="docs", is_specific=True, search_query=wiki_title)
+            return WindowContext(subject=wiki_title[:50], category="reading", is_specific=True, search_query=wiki_title, is_social=False)
 
-    # 9. Google Docs / Sheets / Notion
-    doc_match = re.search(r"^(.*?)\s*-\s*(Google (Docs|Sheets|Slides)|Notion)$", cleaned, re.IGNORECASE)
+    # 10. Reading & Research Platforms: Medium, Substack, Dev.to, ArXiv, Hacker News, blogs
+    reading_indicators = ["medium.com", "substack.com", "dev.to", "hashnode", "hackernews", "ycombinator", "arxiv", "paper", "newsletter"]
+    if any(r in cleaned.lower() for r in reading_indicators):
+        read_title = re.sub(r"\s*[-—|•]\s*(?:Medium|Substack|Dev\.to|Wikipedia|Hacker News).*$", "", cleaned, flags=re.IGNORECASE)
+        read_title = _clean_str(read_title)
+        if len(read_title) >= 3:
+            return WindowContext(subject=read_title[:50], category="reading", is_specific=True, is_social=False)
+
+    # 11. Google Docs / Sheets / Notion / Linear / Jira / Trello / Figma
+    doc_match = re.search(r"^(.*?)\s*-\s*(Google (Docs|Sheets|Slides)|Notion|Jira|Linear|Trello|Figma)$", cleaned, re.IGNORECASE)
     if doc_match:
         doc_title = _clean_str(doc_match.group(1))
         if len(doc_title) >= 3 and doc_title.lower() not in GENERIC_TITLES:
-            return WindowContext(subject=doc_title[:50], category="docs", is_specific=True)
+            return WindowContext(subject=doc_title[:50], category="docs", is_specific=True, is_social=False)
 
-    # 10. General Webpage: Grab page title before site delimiter
+    # 12. General Webpage: Grab page title before site delimiter (articles, blogs, news)
     parts = re.split(r"\s*[-—|•]\s*", cleaned)
     if parts:
         candidate = _clean_str(parts[0])
         candidate = re.sub(r"^\(\d+\)\s*", "", candidate)
         if 4 <= len(candidate) <= 50 and candidate.lower() not in GENERIC_TITLES:
-            return WindowContext(subject=candidate, category="general", is_specific=True)
+            return WindowContext(subject=candidate, category="reading", is_specific=True, is_social=False)
 
     return None
 
@@ -489,7 +512,7 @@ def extract_terminal_context(app: str, title: str) -> Optional[WindowContext]:
     return None
 
 
-def extract_context(app_name: str, window_title: str) -> Optional[WindowContext]:
+def extract_context(app_name: str, window_title: str, dwell_minutes: float = 0.0) -> Optional[WindowContext]:
     """
     Main dispatcher for extracting contextual subjects from active windows.
 
@@ -505,31 +528,29 @@ def extract_context(app_name: str, window_title: str) -> Optional[WindowContext]
     if title_lower in GENERIC_TITLES:
         return None
 
+    ctx = None
     # Code editors
     code_apps = {"code.exe", "devenv.exe", "idea64.exe", "pycharm64.exe", "rider64.exe",
                  "webstorm64.exe", "goland64.exe", "sublime_text.exe", "notepad++.exe", "antigravity.exe"}
     if app_lower in code_apps:
-        return extract_code_context(app_lower, window_title)
-
+        ctx = extract_code_context(app_lower, window_title)
     # Browsers
-    browser_apps = {"chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe", "vivaldi.exe", "arc.exe"}
-    if app_lower in browser_apps:
-        return extract_browser_context(app_lower, window_title)
-
+    elif app_lower in {"chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe", "vivaldi.exe", "arc.exe"}:
+        ctx = extract_browser_context(app_lower, window_title)
     # Media
-    if "spotify" in app_lower:
-        return extract_media_context(app_lower, window_title)
-
+    elif "spotify" in app_lower:
+        ctx = extract_media_context(app_lower, window_title)
     # Terminals
-    terminal_apps = {"powershell.exe", "cmd.exe", "windowsterminal.exe", "wt.exe", "alacritty.exe", "wezterm-gui.exe"}
-    if app_lower in terminal_apps:
-        return extract_terminal_context(app_lower, window_title)
+    elif app_lower in {"powershell.exe", "cmd.exe", "windowsterminal.exe", "wt.exe", "alacritty.exe", "wezterm-gui.exe"}:
+        ctx = extract_terminal_context(app_lower, window_title)
+    else:
+        # General fallback: check if title has a clean, meaningful name
+        parts = re.split(r"[-—|•]", window_title)
+        if parts:
+            candidate = _clean_str(parts[0])
+            if 4 <= len(candidate) <= 45 and candidate.lower() not in GENERIC_TITLES:
+                ctx = WindowContext(subject=candidate, category="general", is_specific=True)
 
-    # General fallback: check if title has a clean, meaningful name
-    parts = re.split(r"[-—|•]", window_title)
-    if parts:
-        candidate = _clean_str(parts[0])
-        if 4 <= len(candidate) <= 45 and candidate.lower() not in GENERIC_TITLES:
-            return WindowContext(subject=candidate, category="general", is_specific=True)
-
-    return None
+    if ctx is not None:
+        ctx.dwell_minutes = dwell_minutes
+    return ctx

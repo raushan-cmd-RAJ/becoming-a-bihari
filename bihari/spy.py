@@ -40,10 +40,22 @@ class TelemetryEvent:
     )
 
     def __init__(self, **kwargs):
-        for k, v in kwargs.items():
-            object.__setattr__(self, k, v)
-        if not hasattr(self, "hwnd"):
-            object.__setattr__(self, "hwnd", 0)
+        defaults = {
+            "app_name": "",
+            "window_title": "",
+            "typing_speed": 0,
+            "backspace_count": 0,
+            "backspace_rate": 0.0,
+            "window_switches_3min": 0,
+            "timestamp": 0.0,
+            "trigger_reason": "",
+            "hour_of_day": 0,
+            "session_minutes": 0.0,
+            "dwell_minutes": -1.0,
+            "hwnd": 0,
+        }
+        for k, default_val in defaults.items():
+            object.__setattr__(self, k, kwargs.get(k, default_val))
 
     def __repr__(self):
         return (
@@ -121,6 +133,70 @@ class KeyboardTracker:
             return sum(1 for t in self._backspaces if t >= cutoff)
 
 
+class DwellTracker:
+    """
+    Tracks continuous elapsed dwell time in the active window/app.
+    Supports resetting on window switch (default) or appropriately
+    preserving dwell counters per active window.
+    """
+
+    def __init__(self, preserve_on_switch: bool = False):
+        self.preserve_on_switch = preserve_on_switch
+        self._active_window: Optional[tuple[str, str]] = None
+        self._active_start: float = time.monotonic()
+        self._accumulated: dict[tuple[str, str], float] = {}
+
+    def switch_window(self, app: Optional[str], title: Optional[str], now: Optional[float] = None) -> float:
+        """
+        Record an active window switch.
+        Resets or appropriately preserves continuous dwell counters.
+        """
+        if now is None:
+            now = time.monotonic()
+        win_key = (app.lower() if app else "", title.lower().strip() if title else "")
+        if self._active_window == win_key:
+            return self.get_dwell_minutes(now)
+
+        if self._active_window is not None and self.preserve_on_switch:
+            elapsed = max(0.0, now - self._active_start)
+            self._accumulated[self._active_window] = self._accumulated.get(self._active_window, 0.0) + elapsed
+
+        self._active_window = win_key
+        self._active_start = now
+        return self.get_dwell_minutes(now)
+
+    def get_dwell_minutes(self, now: Optional[float] = None) -> float:
+        """Get continuous elapsed dwell time in minutes for the active window."""
+        if self._active_window is None:
+            return 0.0
+        if now is None:
+            now = time.monotonic()
+        elapsed = max(0.0, now - self._active_start)
+        if self.preserve_on_switch:
+            elapsed += self._accumulated.get(self._active_window, 0.0)
+        return round(max(0.0, elapsed) / 60.0, 1)
+
+    def reset(self, app: Optional[str] = None, title: Optional[str] = None, now: Optional[float] = None):
+        """Reset dwell counter for active, app-specific, or specified window."""
+        if now is None:
+            now = time.monotonic()
+        if app is not None and title is not None:
+            win_key = (app.lower(), title.lower().strip())
+            self._accumulated.pop(win_key, None)
+            if self._active_window == win_key:
+                self._active_start = now
+        elif app is not None:
+            app_lower = app.lower()
+            keys_to_del = [k for k in self._accumulated if k[0] == app_lower]
+            for k in keys_to_del:
+                self._accumulated.pop(k, None)
+            if self._active_window and self._active_window[0] == app_lower:
+                self._active_start = now
+        else:
+            self._accumulated.clear()
+            self._active_start = now
+
+
 class ForegroundMonitor:
     """
     Monitors the foreground window for changes and backspace spikes.
@@ -139,6 +215,7 @@ class ForegroundMonitor:
         keyboard_tracker: KeyboardTracker,
         poll_interval_ms: int = 500,
         idle_timeout_seconds: int = 300,
+        dwell_tracker: Optional[DwellTracker] = None,
     ):
         self.queue = event_queue
         self.privacy = privacy_filter
@@ -146,6 +223,7 @@ class ForegroundMonitor:
         self.poll_interval = poll_interval_ms / 1000.0
         self.idle_timeout = idle_timeout_seconds
         self._running = False
+        self.dwell_tracker = dwell_tracker or DwellTracker(preserve_on_switch=False)
 
         # Window switch history: deque of (monotonic_timestamp, app_name)
         self._switch_history: collections.deque = collections.deque(maxlen=50)
@@ -206,7 +284,7 @@ class ForegroundMonitor:
         metrics = self.keyboard.get_metrics()
         hour_of_day = datetime.datetime.now().hour
         session_minutes = round((time.monotonic() - self._session_start) / 60.0, 1)
-        dwell_minutes = round((time.monotonic() - self._current_app_start) / 60.0, 1)
+        dwell_minutes = self.dwell_tracker.get_dwell_minutes()
         event = TelemetryEvent(
             app_name=app,
             window_title=title,
@@ -257,8 +335,8 @@ class ForegroundMonitor:
             # Trigger 1: Window changed
             if app != self._last_app or title != self._last_title:
                 self._switch_history.append((time.monotonic(), app))
-                if app != self._last_app:
-                    self._current_app_start = time.monotonic()
+                self.dwell_tracker.switch_window(app, title)
+                self._current_app_start = time.monotonic()
                 self._last_app = app
                 self._last_title = title
                 trigger = "window_change"

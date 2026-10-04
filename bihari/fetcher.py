@@ -18,6 +18,7 @@ import time
 import logging
 import threading
 import collections
+import hashlib
 from pathlib import Path
 from typing import Optional, Union
 from urllib.parse import urlparse, quote_plus
@@ -27,6 +28,23 @@ import random
 import requests
 
 from .inference import Vibe, VIBE_FOLDER_NAMES
+from .logger import extract_canonical_id
+
+
+def compute_file_hash(path: Union[str, Path]) -> str:
+    """Compute SHA-256 hash of image contents for duplicate detection."""
+    p = Path(path)
+    if not p.is_file():
+        return ""
+    try:
+        h = hashlib.sha256()
+        with open(p, "rb") as f:
+            while chunk := f.read(65536):
+                h.update(chunk)
+        return h.hexdigest()
+    except Exception:
+        return ""
+
 
 logger = logging.getLogger(__name__)
 
@@ -235,8 +253,13 @@ def _fetch_from_reddit_json(subreddit: str, count: int) -> list[dict]:
         return []
 
 
-def fetch_memes_for_vibe(vibe: Vibe, meme_dir: Path, count: int = 10) -> int:
-    """Fetch memes for a specific vibe, saving them locally."""
+def fetch_memes_for_vibe(
+    vibe: Vibe,
+    meme_dir: Path,
+    count: int = 10,
+    seen_ids: Optional[set[str]] = None,
+) -> int:
+    """Fetch memes for a specific vibe, saving them locally, avoiding any lifetime seen IDs."""
     target_dir = meme_dir / VIBE_FOLDER_NAMES[vibe]
     target_dir.mkdir(parents=True, exist_ok=True)
 
@@ -282,6 +305,11 @@ def fetch_memes_for_vibe(vibe: Vibe, meme_dir: Path, count: int = 10) -> int:
 
             post_id = post["id"] or str(int(time.time() * 1000))
             filename = f"reddit_{subreddit}_{post_id}{ext}"
+            cid = extract_canonical_id(filename)
+
+            # Never seed memes that the user has already seen!
+            if seen_ids and cid in seen_ids:
+                continue
 
             if filename.replace(ext, "") in existing_stems:
                 continue
@@ -301,8 +329,9 @@ def seed_all_vibes(
     min_threshold: int = 3,
     target_count: int = 10,
     force: bool = False,
+    seen_ids: Optional[set[str]] = None,
 ) -> dict[str, int]:
-    """Seed memes for all vibe categories that are below threshold."""
+    """Seed memes for all vibe categories that are below threshold of unseen memes."""
     results = {}
 
     logger.info("=" * 45)
@@ -314,20 +343,26 @@ def seed_all_vibes(
         folder = meme_dir / folder_name
         folder.mkdir(parents=True, exist_ok=True)
 
-        current_count = sum(
-            1 for f in folder.iterdir()
-            if f.is_file() and f.suffix.lower() in VALID_IMAGE_EXTENSIONS
-        )
+        if seen_ids:
+            unseen_count = sum(
+                1 for f in folder.iterdir()
+                if f.is_file() and f.suffix.lower() in VALID_IMAGE_EXTENSIONS and extract_canonical_id(f.name) not in seen_ids
+            )
+        else:
+            unseen_count = sum(
+                1 for f in folder.iterdir()
+                if f.is_file() and f.suffix.lower() in VALID_IMAGE_EXTENSIONS
+            )
 
-        if not force and current_count >= min_threshold:
-            logger.info(f"  {folder_name}: {current_count} memes — sufficient, skipping.")
+        if not force and unseen_count >= min_threshold:
+            logger.info(f"  {folder_name}: {unseen_count} unseen memes — sufficient, skipping.")
             results[folder_name] = 0
             continue
 
-        needed = max(target_count - current_count, 1) if not force else target_count
-        logger.info(f"  {folder_name}: current={current_count} — downloading {needed} memes...")
+        needed = max(target_count - unseen_count, 1) if not force else target_count
+        logger.info(f"  {folder_name}: unseen={unseen_count} — downloading {needed} fresh memes...")
 
-        fetched = fetch_memes_for_vibe(vibe, meme_dir, count=needed)
+        fetched = fetch_memes_for_vibe(vibe, meme_dir, count=needed, seen_ids=seen_ids)
         results[folder_name] = fetched
         logger.info(f"  {folder_name}: downloaded {fetched} new memes.")
 
@@ -342,12 +377,13 @@ def seed_in_background(
     target_count: int = 10,
     force: bool = False,
     callback=None,
+    seen_ids: Optional[set[str]] = None,
 ):
     """Run the meme seeder in a background thread."""
 
     def _worker():
         try:
-            results = seed_all_vibes(meme_dir, min_threshold, target_count, force)
+            results = seed_all_vibes(meme_dir, min_threshold, target_count, force, seen_ids=seen_ids)
             if callback:
                 callback(results)
         except Exception as e:
@@ -358,18 +394,38 @@ def seed_in_background(
     return thread
 
 
+def _get_target_reaction_subreddit(query: str) -> str:
+    """Map reaction queries to the most visually expressive subreddit."""
+    q = query.lower()
+    if any(w in q for w in ["cat", "kitty", "feline", "meow"]):
+        return "blurrypicturesofcats"
+    if any(w in q for w in ["dog", "puppy", "bark", "otter"]):
+        return "rarepuppers"
+    if any(w in q for w in ["groov", "danc", "bopp", "sway", "bob", "vibe", "chill"]):
+        return "wunkus"
+    if any(w in q for w in ["derp", "animal", "food", "cook", "eat"]):
+        return "AnimalsBeingDerps"
+    if any(w in q for w in ["hmmm", "weird", "curious"]):
+        return "hmmm"
+    return "reactionpics"
+
+
 def search_live_contextual_meme(
     query: Union[str, list[str]],
     meme_dir: Path,
     timeout: int = 5,
     recent_memes: Optional[Union[list, set, collections.deque]] = None,
+    seen_ids: Optional[set[str]] = None,
+    seen_hashes: Optional[set[str]] = None,
 ) -> Optional[Path]:
     """
     Search for a live contextual meme based on active search queries (e.g. ['GTA 6', 'gaming']).
-    Searches across curated meme subreddits on Reddit via RSS feeds.
+    Multi-tier strategy:
+      Tier 1: Targeted direct search on Reddit RSS.
+      Tier 2: Instant resilient fetch via meme-api.com if Reddit RSS is rate-limited (429) or empty.
     Downloads fresh candidate images into a local 'live-cache/' directory.
-    Excludes any memes present in `recent_memes` to prevent repetitive displays.
-    Returns the Path to the image, or None if no result or on network error.
+    Strictly excludes any memes present in `seen_ids` or `recent_memes` to prevent repeats forever.
+    Returns the Path to the image, or None if completely offline.
     """
     candidates = [query] if isinstance(query, str) else query
     valid_candidates = [q.strip() for q in candidates if q and len(q.strip()) >= 2]
@@ -387,72 +443,119 @@ def search_live_contextual_meme(
             elif isinstance(m, (str, Path)):
                 recent_stems.add(Path(m).stem)
 
-    # Target visual reaction subreddits (pure reaction faces/animals, zero text-heavy posts)
-    visual_subs = ["reactionpics", "AnimalsBeingDerps", "wunkus", "Eyebleach"]
-
     # Try the most salient visual reaction query
     for q_item in valid_candidates[:1]:
-        encoded = quote_plus(q_item)
-        logger.info(f"🔍 Searching live visual reaction for: '{q_item}'...")
+        target_sub = _get_target_reaction_subreddit(q_item)
+        logger.info(f"🔍 Searching live visual reaction for: '{q_item}' (targeting r/{target_sub})...")
 
-        for sub in visual_subs:
+        # ── Tier 1: Try direct Reddit RSS search ──
+        rss_subs = [target_sub]
+        if target_sub != "reactionpics":
+            rss_subs.append("reactionpics")
+
+        for sub in rss_subs:
+            encoded = quote_plus(q_item)
             url = f"https://www.reddit.com/r/{sub}/search.rss?q={encoded}&restrict_sr=1&sort=relevance"
 
             try:
                 resp = requests.get(url, headers=RSS_HEADERS, timeout=timeout)
-                if resp.status_code == 429:
-                    logger.debug(f"Reddit search rate-limited (429) for '{q_item}' — falling back to curated library.")
-                    return None
-                if resp.status_code != 200:
-                    logger.debug(f"Live visual search for '{q_item}' on r/{sub} returned {resp.status_code}")
+                if resp.status_code == 200:
+                    img_urls = re.findall(
+                        r'https?://(?:i\.redd\.it|preview\.redd\.it|i\.imgur\.com)/[a-zA-Z0-9_\-\.]+\.(?:jpg|png|webp)',
+                        resp.text
+                    )
+                    candidates_list = []
+                    seen = set()
+                    for img_url in img_urls:
+                        if img_url in seen:
+                            continue
+                        seen.add(img_url)
+                        direct_url = img_url.replace("preview.redd.it", "i.redd.it")
+                        ext = Path(urlparse(direct_url).path).suffix.lower()
+                        if ext not in VALID_IMAGE_EXTENSIONS:
+                            ext = ".jpg"
+                        filename = f"live_{abs(hash(direct_url)) % 10000000}{ext}"
+                        cid = extract_canonical_id(filename)
+
+                        # Exclude any meme seen before in lifetime history
+                        if seen_ids and cid in seen_ids:
+                            continue
+                        save_path = cache_dir / filename
+                        if save_path.stem in recent_stems or save_path.name in recent_stems:
+                            continue
+                        candidates_list.append((direct_url, save_path, filename))
+
+                    if candidates_list:
+                        random.shuffle(candidates_list)
+                        for direct_url, save_path, filename in candidates_list:
+                            if save_path.exists() and save_path.stat().st_size > 1000:
+                                if seen_hashes and compute_file_hash(save_path) in seen_hashes:
+                                    continue
+                                logger.info(f"🎯 Reusing cached unshown live meme: {filename} for '{q_item}'")
+                                return save_path
+                            if _download_image(direct_url, save_path, timeout=timeout):
+                                if seen_hashes and compute_file_hash(save_path) in seen_hashes:
+                                    try:
+                                        save_path.unlink()
+                                    except OSError:
+                                        pass
+                                    continue
+                                logger.info(f"🎯 Downloaded live visual reaction: {filename} for '{q_item}'")
+                                _prune_cache(cache_dir, max_files=60)
+                                return save_path
+            except Exception as e:
+                logger.debug(f"RSS search failed for '{q_item}' on r/{sub}: {e}")
+
+        # ── Tier 2: Resilient live fetch via meme-api (bypasses Reddit 429) ──
+        logger.debug(f"Reddit RSS unavailable or empty for '{q_item}' — pulling live reaction from r/{target_sub} via API...")
+        try:
+            api_subs = [target_sub]
+            if target_sub != "reactionpics":
+                api_subs.append("reactionpics")
+
+            for sub in api_subs:
+                posts = _fetch_from_meme_api(sub, count=15)
+                if not posts:
                     continue
 
-                img_urls = re.findall(
-                    r'https?://(?:i\.redd\.it|preview\.redd\.it|i\.imgur\.com)/[a-zA-Z0-9_\-\.]+\.(?:jpg|png|webp)',
-                    resp.text
-                )
-                if not img_urls:
-                    continue
-
-                seen = set()
-                fallback_cached = None
-
-                candidates_list = []
-                for img_url in img_urls:
-                    if img_url in seen:
+                random.shuffle(posts)
+                for post in posts:
+                    img_url = post.get("url")
+                    if not img_url:
                         continue
-                    seen.add(img_url)
-
-                    direct_url = img_url.replace("preview.redd.it", "i.redd.it")
-                    ext = Path(urlparse(direct_url).path).suffix.lower()
+                    post_id = post.get("id") or str(abs(hash(img_url)) % 10000000)
+                    ext = Path(urlparse(img_url).path).suffix.lower()
                     if ext not in VALID_IMAGE_EXTENSIONS:
                         ext = ".jpg"
+                    filename = f"live_{post_id}{ext}"
+                    cid = extract_canonical_id(filename)
 
-                    filename = f"live_{abs(hash(direct_url)) % 10000000}{ext}"
+                    # Exclude any meme seen before in lifetime history
+                    if seen_ids and cid in seen_ids:
+                        continue
+
                     save_path = cache_dir / filename
-
-                    # If this meme was shown recently, skip it to ensure novelty
                     if save_path.stem in recent_stems or save_path.name in recent_stems:
                         continue
 
-                    candidates_list.append((direct_url, save_path, filename))
+                    if save_path.exists() and save_path.stat().st_size > 1000:
+                        if seen_hashes and compute_file_hash(save_path) in seen_hashes:
+                            continue
+                        logger.info(f"🎯 Reusing cached unshown live reaction: {filename} for '{q_item}'")
+                        return save_path
 
-                if candidates_list:
-                    # Shuffle unshown candidates so every search delivers high entropy and variety!
-                    random.shuffle(candidates_list)
-                    for direct_url, save_path, filename in candidates_list:
-                        if save_path.exists() and save_path.stat().st_size > 1000:
-                            logger.info(f"🎯 Reusing cached unshown live meme: {filename} for '{q_item}'")
-                            return save_path
-
-                        if _download_image(direct_url, save_path, timeout=timeout):
-                            logger.info(f"🎯 Downloaded live visual reaction: {filename} for '{q_item}'")
-                            _prune_cache(cache_dir, max_files=60)
-                            return save_path
-
-            except Exception as e:
-                logger.debug(f"Search failed for '{q_item}' on r/{sub}: {e}")
-                continue
+                    if _download_image(img_url, save_path, timeout=timeout):
+                        if seen_hashes and compute_file_hash(save_path) in seen_hashes:
+                            try:
+                                save_path.unlink()
+                            except OSError:
+                                pass
+                            continue
+                        logger.info(f"🎯 Downloaded live visual reaction: {filename} for '{q_item}' (from r/{sub})")
+                        _prune_cache(cache_dir, max_files=60)
+                        return save_path
+        except Exception as e:
+            logger.debug(f"Tier 2 meme-api live fetch failed: {e}")
 
     logger.info(f"No live meme images found for {valid_candidates} across subreddits.")
     return None

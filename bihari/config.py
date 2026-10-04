@@ -29,6 +29,7 @@ DEFAULTS: dict[str, Any] = {
         "meme_cooldown_seconds": 300,
         "social_cooldown_seconds": 60,
         "idle_timeout_seconds": 300,
+        "never_repeat": True,
     },
     "paths": {
         "meme_dir": "",  # Empty = %LOCALAPPDATA%\Vihara\memes (with fallback to %LOCALAPPDATA%\Bihari\memes)
