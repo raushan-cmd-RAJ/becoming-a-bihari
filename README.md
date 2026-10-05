@@ -1,164 +1,129 @@
 # Vihara 🪞 (Becoming a Bihari)
 
-> *"The tool is a mirror, not a judge. When a reaction meme perfectly captures your current state in real time, the sudden moment of recognition breaks your trance. In that microsecond of laughter, identification falls away, and you return to witnessing consciousness and bliss."*
+> *"The tool is a mirror, not a judge."*
 
-**Vihara** (also known in its viral consumer edition as **Becoming a Bihari**) is a privacy-first, desktop mindfulness mirror for Windows 11.
+**Vihara** is an open-source, privacy-first desktop mirror for people who do lonely computer work.
 
-Traditional productivity tools act like judgmental wardens: they block websites, log screen time, and trigger shame. **Vihara takes the opposite approach: compassionate metacognition through humor.** It detects your behavioral and emotional state from typing velocity, window context, and screen cues, surfacing wordless visual reaction memes paired with punchy, in-the-moment reflections under 40 characters.
+When you spend hours alone in front of a screen, two things consistently happen:
+1. You hit friction (syntax errors, writer's block, fatigue) and unconsciously slide into rabbit holes or doomscrolling.
+2. Nobody is around to notice, so minutes turn into hours.
+
+Traditional productivity apps try to solve this with coercion: blocking websites, locking your screen, or logging your hours with judgmental productivity scores. But when software tries to parent you, you rebel—you open incognito, switch to your phone, or uninstall the blocker.
+
+**Vihara takes the opposite approach: compassionate metacognition through humor.**
+
+It runs quietly in your Windows system tray. It watches typing dynamics and active window context locally. When you're in genuine flow, it stays 100% silent. But when you've been slamming backspace for 20 minutes or falling down a 3 AM rabbit hole about ancient metallurgy, an unobtrusive corner toast slides in with a visual reaction meme and a punchy observation.
+
+You laugh. The hypnotic trance snaps. You close the tab on your own terms.
 
 ---
 
-## 🎭 Dual-Track Experience
+## 🎭 Two Personalities, One Engine
 
-Vihara ships with two interchangeable brand personalities that share the exact same privacy-first engine:
+People need different mirrors on different days. You can hot-swap between two brand tracks at any time with a single click in the system tray:
 
-| Track | Name | Persona | Tone & Voice |
+| Track | Name | Persona | What It Feels Like |
 | :--- | :--- | :--- | :--- |
-| **Track A (Viral / Consumer)** | **Becoming a Bihari** | *The Savage Mindfulness Mirror* | Irreverent, witty, affectionate roasts that pierce through procrastination. |
-| **Track B (Professional / Mindful)** | **Vihara** | *The Mindful Focus Catalyst* | Calm, stoic, grounded observations designed for deep work and sustainable flow. |
-
-You can switch between tracks at any time directly from the system tray menu.
+| **Track A** | **Becoming a Bihari** | *The Savage Mirror* | Unfiltered, witty, affectionate roasts that pierce straight through procrastination. |
+| **Track B** | **Vihara** | *The Mindful Catalyst* | Stoic, dignified, calm observations designed for deep knowledge work and quiet presence. |
 
 ---
 
-## ✨ Key Features
+## 🔒 How It Actually Works (Pragmatic & Transparent)
 
-- **🔒 Absolute Privacy First** — Zero keylogging. The keyboard listener only tracks numerical velocity metrics (characters per minute, backspace error spikes). Passwords, banking, checkouts, and sensitive credentials are masked in volatile RAM before classification.
-- **🛡️ Active Flow State Protection** — When you are in genuine flow (typing velocity >50 chars/min with <8% error rate), all notifications and popups are **100% suppressed**. Your deep work is sacred and never interrupted.
-- **🎯 Emotional Resonance & Precision** — Detects deep browsing trances (e.g. YouTube rabbit holes), syntax rage in code editors, afternoon drift, and post-meeting exhaustion to serve memes that match your exact emotional state.
-- **🔄 Zero-Repetition Engine** — Reinforced by a **60-event sliding window LRU cache**. Even across long sessions, you won't see repetitive reaction memes.
-- **📦 Extensible `.lucidpack` Architecture** — Ships with a default curated pack of **120 unique reaction images** (10 for each of the 12 vibes) verified with unique cryptographic SHA-256 hashes. Supports hot-reloading custom community packs by dropping `.lucidpack` files into the packs directory.
-- **👁️ Lightweight Screen Context** — Native Windows Media OCR (<30ms) extracts in-the-moment video titles and feed topics without sending pixels or text to any cloud servers.
-- **⏱️ Dwell-Time Vibe Determination** — Integrates `DwellTracker` to monitor exact window and application dwell time, driving vibe transitions across calibrated curves (social glance vs. trance, coding immersion vs. grind) and generating blissful, dwell-aware reflections under 40 characters.
-- **🧠 Hybrid Deterministic & AI Inference** — Zero-CPU deterministic rule engine paired with an optional on-device decision model for ambiguous states.
+We believe desktop utilities that monitor focus must be radically honest about what they do and don't touch.
+
+- **Zero Keylogging**: The keyboard listener (`bihari/spy.py`) records **only timestamps** (`time.monotonic()`) in rolling buffers to calculate typing velocity (characters per minute) and backspace error spikes. No characters, strings, or virtual keys are ever inspected, saved, or logged.
+- **Active Flow State Protection**: When you are in genuine flow (typing velocity >40 CPM with low error rates), all notifications and toasts are **completely suppressed**. Focus is sacred.
+- **Volatile Screen Context (<30ms)**: When window titles are ambiguous during video or social browsing, native Windows Media OCR (`Windows.Media.Ocr`) reads the active window header in volatile system RAM to extract the topic. Zero disk writes, zero screenshots saved, zero cloud calls.
+- **Zero Cloud / Fully Offline**: No telemetry servers, no analytics beacons, no tracking. Operates 100% in Airplane Mode.
+- **Deterministic & Lightweight**: Powered by deterministic rule matching cached by window context. Consumes **0.0% CPU** during steady-state work and ~45MB RAM.
+- **No Repeated Jokes**: A local SQLite LRU window (`vibe_history.db`) prevents meme fatigue so you don't see the same reaction twice in a row.
 
 ---
 
-## 4 Categories × 12 Vibes
+## 4 Categories × 12 Behavioral Vibes
 
-| Category | Canonical Vibe | Internal Name | Reflection Flavor |
+| Category | State | What Triggered It | What the Mirror Does |
 | :--- | :--- | :--- | :--- |
-| 🔥 **Intensity** | `FLOW_STATE` | `in-the-zone` | *Suppressed to protect deep focus* |
-| | `GRINDING` | `the-long-grind` | Hour after hour, line after line |
-| | `BURNOUT_APPROACHING` | `running-on-fumes` | Hydration check / take a breath |
-| 😤 **Frustration** | `SYNTAX_RAGE` | `fighting-the-code` | Staring at code like it owes you an apology |
-| | `HELP_SEEKING` | `asking-the-internet` | Consulting the sacred scrolls |
-| | `MOUNTING_FRICTION` | `mounting-friction` | It is putting up a fight today |
-| 😴 **Avoidance** | `WANDERING` | `just-wandering` | Taking a scenic detour |
-| | `LOST_IN_SCROLL` | `lost-in-the-scroll` | Essential research: `{subject}` |
-| | `TAB_BUTTERFLY` | `tab-butterfly` | Bouncing between 10 different tabs |
-| ☕ **Downtime** | `STILLNESS` | `the-great-pause` | The screen waits. So does everything else. |
-| | `MEETING_RECOVERY` | `post-meeting-recovery` | Survived another meeting |
-| | `AFTERNOON_DRIFT` | `afternoon-drift` | Drifting on low battery |
+| 🔥 **Intensity** | `FLOW_STATE` | Sustained typing, low errors | **Muted.** Deep work is never interrupted. |
+| | `GRINDING` | Hours of continuous keystrokes | Acknowledges the sustained grit. |
+| | `BURNOUT_APPROACHING` | Erratic cadence, long sessions | Suggests water, breathing, or stepping away. |
+| 😤 **Frustration** | `SYNTAX_RAGE` | Rapid backspace bursts, rewriting lines | Catches the fight before you break the keyboard. |
+| | `HELP_SEEKING` | Stack Overflow tab #12, docs hopping | Gently observes the pilgrimage for answers. |
+| | `MOUNTING_FRICTION` | 20 window switches in 60 seconds | Points out the restlessness with warmth. |
+| 😴 **Avoidance** | `WANDERING` | Detour from editor to Wikipedia/articles | Mirrors the scenic route you took. |
+| | `LOST_IN_SCROLL` | Long dwell on Reddit, YouTube, feeds | Surfaces the topic: *"Invested in: {subject}"*. |
+| | `TAB_BUTTERFLY` | 40+ browser tabs cycling frantically | *"Can't decide where to be? Same."* |
+| ☕ **Downtime** | `STILLNESS` | Hands off keyboard, desktop idle | Respects the pause—epiphany or rest. |
+| | `MEETING_RECOVERY` | Post-Zoom/Teams blank stare | Gives executive faculties space to decompress. |
+| | `AFTERNOON_DRIFT` | 2:30 PM post-lunch slump | Normalizes the biological circadian dip. |
 
 ---
 
 ## 🚀 Quick Start
 
-### Option 1: Run from Source (Developers)
+### Option 1: Standalone Installer (Recommended)
+
+1. Grab the latest installer (`.exe`) from the [Releases](https://github.com/raushan-cmd-RAJ/becoming-a-bihari/releases) page.
+2. Run the installer and launch the app.
+3. Look for the **🪞** (or **V** / **B**) icon in your Windows system tray.
+
+> [!NOTE]
+> **Windows SmartScreen Note**: Because this is an independent open-source project without an expensive corporate EV certificate, Windows SmartScreen may show an "Unrecognized app" prompt on first launch. Click **More info → Run anyway**. You can inspect every single line of source code right here in the repository.
+
+### Option 2: Run from Source (Developers)
+
+Requires Python 3.10+ on Windows 10/11:
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/vihara.git
-cd vihara
+git clone https://github.com/raushan-cmd-RAJ/becoming-a-bihari.git
+cd becoming-a-bihari
 
 # Install dependencies
 pip install -r requirements.txt
 
-# Launch the app
+# Run the app
 python -m bihari
 ```
 
-Look for the **🪞** icon in your Windows system tray. Right-click for options:
+Right-click the tray icon to:
+- **Toggle Brand Track** (Becoming a Bihari ↔ Vihara)
+- **Show Test Reflection** (verify toast styling)
+- **Open Meme Pack Folder** (add your own images)
 - **Pause / Resume**
-- **Toggle Brand Track** (Vihara ↔ Becoming a Bihari)
-- **Show Test Reflection**
-- **Open Meme Pack Folder**
-- **Quit**
-
-### Option 2: Build the Standalone Windows Installer
-
-To produce a single-click installer (`.exe`) that non-technical users can install without Python or terminal setup:
-
-```cmd
-# Run the automated build script (requires Inno Setup 6)
-build.bat
-```
-
-This compiles a standalone PyInstaller distribution into `dist/vihara/` and packages it with Inno Setup into a zero-UAC installer inside `dist/installer/`.
 
 ---
 
-## 🧪 Testing
+## 📦 Custom Meme & Theme Packs
 
-The repository includes a comprehensive automated test suite covering detection heuristics, meme deduplication, reflection clamping, schema validation, and 8-hour stability simulations:
+Vihara uses the `.lucidpack` specification. You can customize the entire meme catalog:
+
+1. Right-click the tray icon → **Open Meme Folder**.
+2. Drop `.jpg`, `.png`, `.webp`, or animated `.gif` files into any vibe folder (`in-the-zone/`, `fighting-the-code/`, `lost-in-the-scroll/`, etc.).
+3. The app hot-reloads them automatically.
+
+---
+
+## ⚠️ Current Status & Honest Limitations
+
+- **Windows 11 Native Only (For Now)**: Uses native Win32 hooks and `Windows.Media.Ocr`. macOS and Linux support are planned, but not built yet.
+- **Python Runtime Overhead**: The desktop daemon runs on Python + Tkinter (~45MB RAM). A future Rust port is on the roadmap to bring memory below 10MB.
+- **Desktop Focus**: This is a standalone desktop app, not a mobile blocker or browser extension. It's built specifically for desk knowledge work.
+
+---
+
+## 🧪 Tests
+
+The project includes an automated test suite verifying detection heuristics, context parsing, zero-repeat mechanics, and privacy filters:
 
 ```bash
-# Run all tests (189 tests across app and strategy suites)
 python -m unittest discover -s tests -p "test_*.py"
-```
-
----
-
-## ⚙️ Configuration
-
-Customize behavior in `config.toml` in the project root:
-
-```toml
-[general]
-brand_track = "vihara"            # "vihara" (mindful) or "bihari" (savage roasts)
-poll_interval_ms = 500
-meme_cooldown_seconds = 300       # Work session cooldown (5 minutes)
-social_cooldown_seconds = 60      # Social/video trance cooldown (1 minute)
-never_repeat = true               # Permanent Zero-Repeat: never show the same meme twice ever
-
-[privacy]
-blocked_apps = ["KeePassXC.exe", "1Password.exe", "Bitwarden.exe"]
-blocked_title_keywords = ["bank", "sign in", "login", "password", "checkout", "payment"]
-
-[display]
-duration_ms = 4000                # Toast duration (pauses on hover)
-width = 380
-height = 320
-slide_animation = true
-
-[packs]
-active_pack = "default"
-auto_reload = true
-```
-
----
-
-## 🏛️ System Architecture
-
-```
-┌────────────────────────────────────────────────────────────────────────┐
-│  UI Layer (Tkinter Mainloop)                                           │
-│  └── MemeOverlay: Sliding corner toast + modal inspection dialog       │
-├────────────────────────────────────────────────────────────────────────┤
-│  Platform Abstraction Layer (bihari/pal/)                              │
-│  ├── Win32HookMonitor: Low-overhead OS foreground events (<0.05% CPU)  │
-│  └── KeyboardTracker: pynput keystroke velocity (Zero Keylogging)      │
-├────────────────────────────────────────────────────────────────────────┤
-│  Privacy & Context Filter (privacy.py, context.py)                     │
-│  └── Mask sensitive credentials + extract active work/leisure topic    │
-├────────────────────────────────────────────────────────────────────────┤
-│  Inference & Reflection Engine (inference.py)                          │
-│  ├── Flow State Shield: Suppresses alerts during high-velocity work   │
-│  ├── Dwell-Time Vibe Tracker: Objective, non-judgmental presence mirror│
-│  └── Vibe Classifier: 12 vibes + contextual captions (<40 chars)       │
-├────────────────────────────────────────────────────────────────────────┤
-│  Pack & Deduplication Engine (packs.py, memes.py, logger.py)           │
-│  ├── .lucidpack loader + cross-vibe dynamic candidate pool             │
-│  └── Permanent Zero-Repeat: Canonical ID & SHA-256 lifetime SQLite log │
-├────────────────────────────────────────────────────────────────────────┤
-│  System Tray Service (tray.py)                                         │
-│  └── Background tray icon + brand toggle + hotkey controls             │
-└────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
 ## 📄 License
 
-This project is licensed under the [MIT License](LICENSE).
+MIT License — free and open source. Built with care for anyone working long hours at a screen.
