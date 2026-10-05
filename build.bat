@@ -8,7 +8,7 @@ rem ============================================================================
 setlocal enabledelayedexpansion
 
 echo ==============================================================================
-echo   Vihara Desktop Mindfulness Mirror - Build & Packaging Pipeline
+echo   Vihara Desktop Mindfulness Mirror - Build ^& Packaging Pipeline
 echo ==============================================================================
 
 rem Step 1: Verify Python Environment
@@ -24,13 +24,13 @@ echo       Detected: !PYTHON_VER!
 rem Step 2: Verify PyInstaller
 echo [2/4] Checking PyInstaller build tool...
 python -c "import PyInstaller" >nul 2>&1
-if %ERRORLEVEL% NEQ 0 (
+if !ERRORLEVEL! NEQ 0 (
     echo       PyInstaller not detected in current environment.
     echo       Installing PyInstaller...
     python -m pip install pyinstaller
-    if %ERRORLEVEL% NEQ 0 (
+    if !ERRORLEVEL! NEQ 0 (
         echo [ERROR] Failed to install PyInstaller. Run: pip install pyinstaller
-        exit /b %ERRORLEVEL%
+        exit /b !ERRORLEVEL!
     )
 )
 for /f "tokens=*" %%i in ('python -m PyInstaller --version 2^>nul') do set PYINSTALLER_VER=%%i
@@ -65,13 +65,9 @@ if %ERRORLEVEL% EQU 0 (
 )
 
 if "!ISCC_EXE!"=="" (
-    if exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" (
-        set "ISCC_EXE=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
-    ) else if exist "%ProgramFiles%\Inno Setup 6\ISCC.exe" (
-        set "ISCC_EXE=%ProgramFiles%\Inno Setup 6\ISCC.exe"
-    ) else if exist "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" (
-        set "ISCC_EXE=%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe"
-    )
+    if exist "!ProgramFiles(x86)!\Inno Setup 6\ISCC.exe" set "ISCC_EXE=!ProgramFiles(x86)!\Inno Setup 6\ISCC.exe"
+    if exist "!ProgramFiles!\Inno Setup 6\ISCC.exe" set "ISCC_EXE=!ProgramFiles!\Inno Setup 6\ISCC.exe"
+    if exist "!LOCALAPPDATA!\Programs\Inno Setup 6\ISCC.exe" set "ISCC_EXE=!LOCALAPPDATA!\Programs\Inno Setup 6\ISCC.exe"
 )
 
 if not "!ISCC_EXE!"=="" (
