@@ -108,3 +108,7 @@ Desktop.ini
 
 # Multi-agent internal coordination
 .agents/
+
+# Internal docs & strategy planning
+docs/internals/
+product_strategy/

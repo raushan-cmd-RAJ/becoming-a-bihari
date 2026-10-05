@@ -190,13 +190,15 @@ def validate_pack_manifest(
             with open(schema_path, "r", encoding="utf-8") as f:
                 schema = json.load(f)
         else:
-            # Default schema path in product_strategy
-            default_schema = (
-                Path(__file__).resolve().parent.parent
-                / "product_strategy"
-                / "01_technical_packaging"
-                / "meme_pack_schema.json"
-            )
+            # Default schema path in packs/ or product_strategy
+            default_schema = Path(__file__).resolve().parent.parent / "packs" / "meme_pack_schema.json"
+            if not default_schema.exists():
+                default_schema = (
+                    Path(__file__).resolve().parent.parent
+                    / "product_strategy"
+                    / "01_technical_packaging"
+                    / "meme_pack_schema.json"
+                )
             if default_schema.exists():
                 with open(default_schema, "r", encoding="utf-8") as f:
                     schema = json.load(f)
