@@ -32,25 +32,49 @@ import tkinter as tk
 from queue import Queue, Empty
 from pathlib import Path
 
-from .config import load_config
-from .privacy import PrivacyFilter
-from .spy import KeyboardTracker, ForegroundMonitor
-from .inference import (
-    Vibe,
-    VibeResult,
-    VibeClassifier,
-    get_reflection,
-    is_flow_gate_suppressed,
-    VIBE_FOLDER_NAMES,
-)
-from .memes import MemeRetriever
-from .packs import PackManager
-from .display import MemeOverlay
-from .tray import SystemTray, ensure_default_desktop
-from .logger import VibeLogger
-from .fetcher import seed_in_background, search_live_contextual_meme
-from .context import extract_context
-from .ocr import ScreenTextExtractor
+if __package__ in (None, ""):
+    _root = Path(__file__).resolve().parent.parent
+    if str(_root) not in sys.path:
+        sys.path.insert(0, str(_root))
+    from bihari.config import load_config
+    from bihari.privacy import PrivacyFilter
+    from bihari.spy import KeyboardTracker, ForegroundMonitor
+    from bihari.inference import (
+        Vibe,
+        VibeResult,
+        VibeClassifier,
+        get_reflection,
+        is_flow_gate_suppressed,
+        VIBE_FOLDER_NAMES,
+    )
+    from bihari.memes import MemeRetriever
+    from bihari.packs import PackManager
+    from bihari.display import MemeOverlay
+    from bihari.tray import SystemTray, ensure_default_desktop
+    from bihari.logger import VibeLogger
+    from bihari.fetcher import seed_in_background, search_live_contextual_meme
+    from bihari.context import extract_context
+    from bihari.ocr import ScreenTextExtractor
+else:
+    from .config import load_config
+    from .privacy import PrivacyFilter
+    from .spy import KeyboardTracker, ForegroundMonitor
+    from .inference import (
+        Vibe,
+        VibeResult,
+        VibeClassifier,
+        get_reflection,
+        is_flow_gate_suppressed,
+        VIBE_FOLDER_NAMES,
+    )
+    from .memes import MemeRetriever
+    from .packs import PackManager
+    from .display import MemeOverlay
+    from .tray import SystemTray, ensure_default_desktop
+    from .logger import VibeLogger
+    from .fetcher import seed_in_background, search_live_contextual_meme
+    from .context import extract_context
+    from .ocr import ScreenTextExtractor
 
 # ── Logging setup ──
 logging.basicConfig(
@@ -104,7 +128,17 @@ def main():
     # ── Initialize Module 3: THE PACK MANAGER & MEME RETRIEVER ──
     local_app = os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))
     packs_dir = Path(local_app) / "Vihara" / "packs"
-    bundled_pack = Path(__file__).resolve().parent.parent / "packs" / "default.lucidpack"
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).parent
+        candidates = [
+            exe_dir / "packs" / "default.lucidpack",
+            exe_dir / "_internal" / "packs" / "default.lucidpack",
+        ]
+        if hasattr(sys, "_MEIPASS"):
+            candidates.append(Path(sys._MEIPASS) / "packs" / "default.lucidpack")
+        bundled_pack = next((p for p in candidates if p.exists()), candidates[0])
+    else:
+        bundled_pack = Path(__file__).resolve().parent.parent / "packs" / "default.lucidpack"
     pack_manager = PackManager(
         packs_dir=packs_dir,
         bundled_pack_path=bundled_pack,

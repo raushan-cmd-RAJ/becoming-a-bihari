@@ -73,7 +73,7 @@ runtime_hook_file = str(PROJECT_ROOT / "packaging" / "hooks" / "runtime_paths.py
 runtime_hooks = [runtime_hook_file] if os.path.exists(runtime_hook_file) else []
 
 a = Analysis(
-    [str(PROJECT_ROOT / "bihari" / "__main__.py")],
+    [str(PROJECT_ROOT / "run_vihara.py")],
     pathex=[str(PROJECT_ROOT)],
     binaries=[],
     datas=added_datas,

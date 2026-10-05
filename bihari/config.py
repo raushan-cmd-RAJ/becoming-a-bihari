@@ -89,6 +89,12 @@ def _find_config_file() -> Path | None:
         Path.cwd() / "config.toml",
         Path(__file__).resolve().parent.parent / "config.toml",
     ]
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).parent
+        candidates.insert(0, exe_dir / "config.toml")
+        candidates.insert(0, exe_dir / "_internal" / "config.toml")
+        if hasattr(sys, "_MEIPASS"):
+            candidates.insert(0, Path(sys._MEIPASS) / "config.toml")
     for path in candidates:
         if path.is_file():
             return path
