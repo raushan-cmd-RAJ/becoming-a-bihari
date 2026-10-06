@@ -69,6 +69,10 @@ DEFAULTS: dict[str, Any] = {
         "min_threshold": 3,
         "target_count": 10,
     },
+    "learning": {
+        "enabled": True,
+        "learning_rate": 0.03,
+    },
 }
 
 

@@ -19,10 +19,12 @@ added_datas = [
     (str(PROJECT_ROOT / "config.toml"), "."),
     (str(PROJECT_ROOT / "packs" / "default.lucidpack"), "packs"),
     (str(PROJECT_ROOT / "memes"), "memes"),
+    (str(PROJECT_ROOT / "bihari" / "models" / "base_brain.json"), "bihari/models"),
 ]
 
 # 2. Hidden Imports for Platform and Dependencies
 hidden_imports = [
+    "bihari.micro_model",
     "PIL",
     "PIL.Image",
     "PIL.ImageTk",

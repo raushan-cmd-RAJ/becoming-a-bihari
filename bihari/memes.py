@@ -109,7 +109,7 @@ class MemeRetriever:
         self._seen_ids: set[str] = set()
         self._seen_hashes: set[str] = set()
         self._hash_cache: dict[str, str] = {}
-        self._recent: collections.deque = collections.deque(maxlen=200)
+        self._recent: collections.deque = collections.deque(maxlen=100)
         self._last_shown_time: float = 0
         self._last_shown_map: dict[str, float] = {}
 

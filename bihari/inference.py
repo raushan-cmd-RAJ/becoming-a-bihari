@@ -30,6 +30,14 @@ warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*laya: this
 logger = logging.getLogger(__name__)
 
 
+def _get_micro_brain():
+    try:
+        from .micro_model import MicroBrain
+        return MicroBrain
+    except Exception:
+        return None
+
+
 # ──────────────────────────────────────────────
 # The 12 Vibes — 4 categories × 3 states
 # ──────────────────────────────────────────────
@@ -1442,23 +1450,37 @@ class VibeClassifier:
     This is the primary classification interface.
     """
 
-    def __init__(self, use_laya: bool = True):
+    def __init__(self, use_laya: bool = True, enable_learning: bool = True):
         """
         Args:
-            use_laya: If True, load Laya as fallback for ambiguous cases.
-                      If False, use pure rule-based classification.
+            use_laya: If True, allow legacy Laya as fallback when installed.
+            enable_learning: If True, enable on-device continuous personalization.
         """
         self.use_laya = use_laya
         self.laya_bridge = LayaBridge() if use_laya else None
 
+        # MicroBrain: Zero-dependency, on-device decision intelligence (<500 KB, <0.5ms)
+        micro_cls = _get_micro_brain()
+        self.micro_brain = micro_cls(enable_learning=enable_learning) if micro_cls else None
+
     def classify_context(self, app_name: str, window_title: str) -> dict:
-        """Helper to get Laya's semantic classification of the current window."""
+        """Helper to get semantic classification of the current window."""
+        if self.micro_brain:
+            res = self.micro_brain.classify_context(app_name, window_title)
+            if res.get("activity"):
+                return res
         if self.laya_bridge and self.laya_bridge.is_available():
             return self.laya_bridge.classify_context(app_name, window_title)
         return {"activity": None, "meme_category": None}
 
     def classify_screen_content(self, screen_text: str, app_name: str, window_title: str) -> dict:
         """Helper to classify on-screen OCR content into mindfulness theme & reflection."""
+        # 1. Primary: Instant on-device MicroBrain (<0.5ms, zero dependencies)
+        if self.micro_brain:
+            res = self.micro_brain.classify_screen_content(screen_text, app_name, window_title)
+            if res:
+                return res
+        # 2. Secondary: Laya fallback if installed and available
         if self.laya_bridge and self.laya_bridge.is_available():
             return self.laya_bridge.classify_screen_content(screen_text, app_name, window_title)
         return {}
@@ -1469,8 +1491,9 @@ class VibeClassifier:
 
         Steps:
           1. Try deterministic rules (instant, 0% CPU)
-          2. If ambiguous, Laya enabled, allow_laya=True, and not on routine dwell_tick: run Laya
-          3. Default fallback (0% CPU)
+          2. If ambiguous, run MicroBrain (instant <0.5ms on-device decision model)
+          3. If MicroBrain uncertain or disabled, try Laya (if installed/available)
+          4. Default heuristic fallback (0% CPU)
         """
         # Step 1: Rules
         result = classify_by_rules(event)
@@ -1478,14 +1501,22 @@ class VibeClassifier:
             logger.debug(f"Rules classified: {result}")
             return result
 
-        # Step 2: Laya (never run on routine dwell_tick or when cooldown is active)
         trigger = getattr(event, "trigger_reason", "")
+
+        # Step 2: MicroBrain on-device decision model (0% CPU, <0.5ms)
+        if allow_laya and trigger != "dwell_tick" and self.micro_brain:
+            micro_res = self.micro_brain.classify_vibe(event)
+            if micro_res.confidence >= 0.50:
+                logger.debug(f"MicroBrain classified: {micro_res}")
+                return micro_res
+
+        # Step 3: Laya fallback (if installed in dev environment)
         if allow_laya and trigger != "dwell_tick" and self.laya_bridge and self.laya_bridge.is_available():
             result = self.laya_bridge.classify(event)
             logger.debug(f"Laya classified: {result}")
             return result
 
-        # Step 3: Fast default fallback (0% CPU)
+        # Step 4: Fast default fallback (0% CPU)
         app = event.app_name.lower()
         title = getattr(event, "window_title", "").lower()
         dwell_min = getattr(event, "dwell_minutes", -1)
@@ -1503,3 +1534,8 @@ class VibeClassifier:
             elif dwell_min > 45.0:
                 return VibeResult(Vibe.GRINDING, 0.70, "rules_default")
         return VibeResult(Vibe.WANDERING, 0.40, "rules_default")
+
+    def adapt_user_vibe(self, event, target_vibe: Any, was_positive: bool = True) -> None:
+        """On-device continuous personalization (100% private, zero cloud)."""
+        if self.micro_brain:
+            self.micro_brain.adapt_vibe(event, target_vibe, was_positive=was_positive)

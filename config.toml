@@ -79,3 +79,9 @@ min_threshold = 20
 
 # How many memes to download per vibe category
 target_count = 25
+
+[learning]
+# On-device continuous personalization (100% local, zero cloud, mathematically private)
+# Adapts model weights locally on your machine based on feedback and usage patterns.
+enabled = true
+learning_rate = 0.03

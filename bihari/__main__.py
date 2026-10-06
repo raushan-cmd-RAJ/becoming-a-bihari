@@ -118,7 +118,10 @@ def main():
     )
 
     # ── Initialize Module 2: THE INFERENCE BRIDGE ──
-    classifier = VibeClassifier(use_laya=cfg["inference"]["use_laya"])
+    classifier = VibeClassifier(
+        use_laya=cfg["inference"]["use_laya"],
+        enable_learning=cfg.get("learning", {}).get("enabled", True),
+    )
 
     # ── Paths & SQLite Logger ──
     meme_dir = Path(cfg["paths"]["meme_dir"])
