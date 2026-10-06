@@ -29,9 +29,45 @@ def compute_file_hash(path: Union[str, Path]) -> str:
         with open(p, "rb") as f:
             while chunk := f.read(65536):
                 h.update(chunk)
-        return h.hexdigest()
+        return h.hexdigest().lower()
     except Exception:
         return ""
+
+
+# ── Semantic Vibe Affinity Clusters (Prioritized Borrowing) ──
+VIBE_AFFINITY_CLUSTERS: dict[Vibe, list[Vibe]] = {
+    # Distraction & Browsing
+    Vibe.LOST_IN_SCROLL: [Vibe.WANDERING, Vibe.TAB_BUTTERFLY, Vibe.AFTERNOON_DRIFT, Vibe.STILLNESS],
+    Vibe.WANDERING: [Vibe.LOST_IN_SCROLL, Vibe.TAB_BUTTERFLY, Vibe.AFTERNOON_DRIFT, Vibe.STILLNESS],
+    Vibe.TAB_BUTTERFLY: [Vibe.LOST_IN_SCROLL, Vibe.WANDERING, Vibe.AFTERNOON_DRIFT, Vibe.STILLNESS],
+    Vibe.AFTERNOON_DRIFT: [Vibe.WANDERING, Vibe.LOST_IN_SCROLL, Vibe.STILLNESS, Vibe.MEETING_RECOVERY],
+    Vibe.STILLNESS: [Vibe.AFTERNOON_DRIFT, Vibe.WANDERING, Vibe.MEETING_RECOVERY],
+
+    # Work Strain & Exhaustion
+    Vibe.BURNOUT_APPROACHING: [Vibe.MEETING_RECOVERY, Vibe.MOUNTING_FRICTION, Vibe.AFTERNOON_DRIFT],
+    Vibe.MEETING_RECOVERY: [Vibe.BURNOUT_APPROACHING, Vibe.AFTERNOON_DRIFT, Vibe.STILLNESS],
+
+    # Technical & Problem Solving
+    Vibe.SYNTAX_RAGE: [Vibe.HELP_SEEKING, Vibe.MOUNTING_FRICTION, Vibe.GRINDING],
+    Vibe.HELP_SEEKING: [Vibe.SYNTAX_RAGE, Vibe.MOUNTING_FRICTION, Vibe.GRINDING],
+    Vibe.MOUNTING_FRICTION: [Vibe.SYNTAX_RAGE, Vibe.HELP_SEEKING, Vibe.BURNOUT_APPROACHING],
+
+    # Productive Flow
+    Vibe.FLOW_STATE: [Vibe.GRINDING, Vibe.STILLNESS],
+    Vibe.GRINDING: [Vibe.FLOW_STATE, Vibe.MOUNTING_FRICTION],
+}
+
+# ── Strictly Incompatible Borrowing Pairs ──
+# Leisure, resting, and browsing must NEVER borrow technical syntax rage / software crash dumps.
+INCOMPATIBLE_BORROWING: dict[Vibe, set[Vibe]] = {
+    Vibe.LOST_IN_SCROLL: {Vibe.SYNTAX_RAGE, Vibe.HELP_SEEKING},
+    Vibe.TAB_BUTTERFLY: {Vibe.SYNTAX_RAGE, Vibe.HELP_SEEKING},
+    Vibe.WANDERING: {Vibe.SYNTAX_RAGE, Vibe.HELP_SEEKING},
+    Vibe.STILLNESS: {Vibe.SYNTAX_RAGE, Vibe.HELP_SEEKING, Vibe.MOUNTING_FRICTION},
+    Vibe.AFTERNOON_DRIFT: {Vibe.SYNTAX_RAGE, Vibe.HELP_SEEKING},
+    Vibe.BURNOUT_APPROACHING: {Vibe.SYNTAX_RAGE},
+    Vibe.MEETING_RECOVERY: {Vibe.SYNTAX_RAGE},
+}
 
 
 MEME_README_TEXT = (
@@ -121,7 +157,7 @@ class MemeRetriever:
         self._ensure_folders()
 
     def _load_seen_history(self):
-        """Load all lifetime seen meme IDs and hashes from SQLite."""
+        """Load all lifetime seen meme IDs and hashes from SQLite, backfilling hashes from disk."""
         try:
             import sqlite3
             conn = sqlite3.connect(str(self.history_db), timeout=2.0)
@@ -144,7 +180,7 @@ class MemeRetriever:
                 )
                 for (m_name, ts) in cursor.fetchall():
                     if m_name:
-                        cid = extract_canonical_id(m_name)
+                        cid = extract_canonical_id(m_name).lower()
                         cursor.execute(
                             "INSERT OR IGNORE INTO seen_memes (meme_id, file_hash, filename, shown_at) "
                             "VALUES (?, ?, ?, ?)",
@@ -154,19 +190,49 @@ class MemeRetriever:
 
             cursor.execute("SELECT meme_id, file_hash, filename, shown_at FROM seen_memes")
             rows = cursor.fetchall()
-            conn.close()
 
+            # Build a local disk file lookup to backfill missing hashes
+            disk_files: dict[str, Path] = {}
+            if self.meme_dir.exists():
+                for f in self.meme_dir.rglob("*"):
+                    if f.is_file() and f.suffix.lower() in self.VALID_EXTENSIONS:
+                        disk_files[f.name.lower()] = f
+
+            backfilled_updates = []
             for meme_id, f_hash, filename, shown_at in rows:
                 if meme_id:
                     self._seen_ids.add(meme_id.lower())
-                if f_hash:
-                    self._seen_hashes.add(f_hash.lower())
                 if filename:
+                    self._seen_ids.add(filename.lower())
                     self._recent.append(filename)
                     self._last_shown_map[filename] = float(shown_at or 0.0)
 
+                # Backfill file_hash if empty and file is present on disk
+                if not f_hash and filename and filename.lower() in disk_files:
+                    try:
+                        computed_hash = self.get_file_hash(disk_files[filename.lower()])
+                        if computed_hash:
+                            f_hash = computed_hash
+                            backfilled_updates.append((computed_hash, meme_id))
+                    except Exception:
+                        pass
+
+                if f_hash:
+                    self._seen_hashes.add(f_hash.lower())
+
+            if backfilled_updates:
+                cursor.executemany(
+                    "UPDATE seen_memes SET file_hash = ? WHERE meme_id = ?",
+                    backfilled_updates,
+                )
+                conn.commit()
+                logger.info(f"Backfilled {len(backfilled_updates)} meme content hashes in SQLite history.")
+
+            conn.close()
+
             logger.info(
-                f"Loaded {len(self._seen_ids)} lifetime seen memes from database "
+                f"Loaded {len(self._seen_ids)} lifetime seen memes and "
+                f"{len(self._seen_hashes)} content hashes from database "
                 f"(never_repeat={self.never_repeat})."
             )
         except Exception as e:
@@ -264,9 +330,10 @@ class MemeRetriever:
             self._recent.append(name)
             self._last_shown_map[name] = current_time
 
-            cid = extract_canonical_id(name)
+            cid = extract_canonical_id(name).lower()
             self._seen_ids.add(cid)
-            f_hash = self.get_file_hash(p)
+            self._seen_ids.add(name.lower())
+            f_hash = self.get_file_hash(p).lower()
             if f_hash:
                 self._seen_hashes.add(f_hash)
 
@@ -335,15 +402,13 @@ class MemeRetriever:
             if bundled and bundled != active_pack:
                 candidates.extend(bundled.get_memes(vibe))
 
-        # For browsing/scrolling/wandering, cross-pool across all visual reaction folders!
-        # This dramatically expands the pool so candidate exhaustion is minimized.
+        # For browsing/scrolling/wandering, cross-pool across closely related visual reaction folders
         if vibe in (Vibe.LOST_IN_SCROLL, Vibe.WANDERING):
             related_vibes = [
                 Vibe.WANDERING,
                 Vibe.TAB_BUTTERFLY,
                 Vibe.STILLNESS,
                 Vibe.MEETING_RECOVERY,
-                Vibe.BURNOUT_APPROACHING,
                 Vibe.AFTERNOON_DRIFT,
             ]
             seen_names = {c.name for c in candidates}
@@ -372,16 +437,23 @@ class MemeRetriever:
             # Completely eliminate any meme whose canonical ID or content hash was ever seen
             eligible = [
                 c for c in candidates
-                if extract_canonical_id(c.name) not in self._seen_ids
-                and (not self.get_file_hash(c) or self.get_file_hash(c) not in self._seen_hashes)
+                if extract_canonical_id(c.name).lower() not in self._seen_ids
+                and c.name.lower() not in self._seen_ids
+                and (not self.get_file_hash(c) or self.get_file_hash(c).lower() not in self._seen_hashes)
             ]
 
             if not eligible:
-                # Local vibe folder exhausted! Search other folders across all 12 vibes for unseen memes
+                # Local vibe folder exhausted! Search compatible affinity clusters only
+                affinity_vibes = VIBE_AFFINITY_CLUSTERS.get(vibe, [])
+                incompatible = INCOMPATIBLE_BORROWING.get(vibe, set())
+
+                # Tier 1: Compatible affinity cluster vibes
+                candidate_vibes = [v for v in affinity_vibes if v not in incompatible]
+                # Tier 2: Other remaining vibes (strictly excluding incompatible ones)
+                candidate_vibes += [v for v in Vibe if v != vibe and v not in candidate_vibes and v not in incompatible]
+
                 other_unseen = []
-                for other_vibe in Vibe:
-                    if other_vibe == vibe:
-                        continue
+                for other_vibe in candidate_vibes:
                     ov_folder = self.meme_dir / VIBE_FOLDER_NAMES[other_vibe]
                     ov_candidates = []
                     if active_pack:
@@ -392,20 +464,29 @@ class MemeRetriever:
                             if f.is_file() and f.suffix.lower() in self.VALID_EXTENSIONS
                         ])
                     for oc in ov_candidates:
+                        cid = extract_canonical_id(oc.name).lower()
+                        chash = self.get_file_hash(oc).lower()
                         if (
-                            extract_canonical_id(oc.name) not in self._seen_ids
-                            and (not self.get_file_hash(oc) or self.get_file_hash(oc) not in self._seen_hashes)
+                            cid not in self._seen_ids
+                            and oc.name.lower() not in self._seen_ids
+                            and (not chash or chash not in self._seen_hashes)
                         ):
                             other_unseen.append(oc)
+                    if other_unseen:
+                        # Stop at first compatible vibe that has fresh unseen memes
+                        break
 
                 if other_unseen:
                     logger.info(
                         f"Vibe {vibe.value} local unseen candidates exhausted — "
-                        f"borrowing from related unseen pool ({len(other_unseen)} available)."
+                        f"borrowing from compatible affinity pool ({len(other_unseen)} available)."
                     )
                     eligible = other_unseen
                 else:
-                    logger.warning("All local memes across all folders have been seen! Permanent zero-repeat active.")
+                    logger.info(
+                        f"All unseen memes for {vibe.value} and compatible affinity cluster exhausted. "
+                        f"Zero-repeat active — falling back to text reflection."
+                    )
                     return None
 
             chosen = random.choice(eligible)

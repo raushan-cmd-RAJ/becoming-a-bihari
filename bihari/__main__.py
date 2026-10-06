@@ -28,6 +28,7 @@ import atexit
 import logging
 import threading
 import subprocess
+import collections
 import tkinter as tk
 from queue import Queue, Empty
 from pathlib import Path
@@ -369,6 +370,37 @@ def main():
     last_social_meme_time = 0.0
     ocr_extractor = ScreenTextExtractor()
 
+    social_trance_pool = [
+        "blank stare",
+        "monkey puppet looking away",
+        "side eye",
+        "staring into soul",
+        "doomscrolling",
+        "mesmerized",
+        "daydreaming",
+        "facepalm",
+        "speechless",
+        "double take",
+        "disbelief",
+        "jaw drop",
+        "tired acceptance",
+        "existential stare",
+        "eating popcorn",
+        "intense stare",
+        "mind blown",
+        "peaceful pause",
+    ]
+    recent_social_queries: collections.deque = collections.deque(maxlen=12)
+
+    def get_social_trance_query() -> str:
+        candidates = [q for q in social_trance_pool if q not in recent_social_queries]
+        if not candidates:
+            recent_social_queries.clear()
+            candidates = social_trance_pool
+        chosen = random.choice(candidates)
+        recent_social_queries.append(chosen)
+        return chosen
+
     def inference_loop():
         """
         Consumer loop: reads TelemetryEvents from the queue,
@@ -435,11 +467,13 @@ def main():
                         should_ocr = is_social_feed and not (
                             ctx and getattr(ctx, "is_specific", False) and getattr(ctx, "category", "") in ("video", "code", "docs", "email", "reading")
                         )
+                        ocr_handled = False
                         if hwnd and should_ocr and ocr_extractor.is_available():
                             ocr_text = ocr_extractor.extract_text(hwnd, event.app_name)
                             if ocr_text:
                                 mindful_data = classifier.classify_screen_content(ocr_text, event.app_name, event.window_title)
                                 if mindful_data:
+                                    ocr_handled = True
                                     logger.info(f"🧘 In-screen mindfulness match: theme={mindful_data['human_theme']}")
                                     result = VibeResult(mindful_data["vibe"], 0.92, "laya_ocr")
                                     custom_reflection = mindful_data["reflection"]
@@ -466,14 +500,14 @@ def main():
                                         if meme_path and is_social:
                                             last_social_meme_time = now
 
-                        # ── 2. Fallback to Title / Context Pipeline if OCR produced no meme ──
-                        if not meme_path:
+                        # ── 2. Fallback to Title / Context Pipeline if OCR was not active for this event ──
+                        if not ocr_handled and not meme_path:
                             # ── Social Media Spot-On Mode ──
                             if is_social:
                                 if ctx and getattr(ctx, "is_specific", False) and ctx.search_query and ctx.search_query.lower() not in ("instagram", "youtube", "tiktok", "twitter", "reddit", "facebook"):
                                     queries = [ctx.search_query]
                                 else:
-                                    queries = [random.choice(["side eye", "blank stare", "monkey puppet looking away", "cat staring", "distracted"])]
+                                    queries = [get_social_trance_query()]
 
                                 logger.info(f"📱 Social media trance detected (queries={queries}) — attempting live search...")
                                 live_meme = search_live_contextual_meme(

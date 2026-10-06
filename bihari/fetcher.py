@@ -63,15 +63,17 @@ VIBE_SUBREDDITS: dict[Vibe, list[str]] = {
     Vibe.BURNOUT_APPROACHING: [
         "Eyebleach",
         "reactionpics",
+        "wholesomememes",
         "aww",
     ],
     Vibe.SYNTAX_RAGE: [
+        "programmerhumor",
         "reactionpics",
-        "blurrypicturesofcats",
         "ReactionMemes",
-        "softwaregore",
+        "me_irl",
     ],
     Vibe.HELP_SEEKING: [
+        "programmerhumor",
         "reactionpics",
         "ReactionMemes",
         "AnimalsBeingDerps",
@@ -80,21 +82,25 @@ VIBE_SUBREDDITS: dict[Vibe, list[str]] = {
         "reactionpics",
         "hmmm",
         "AnimalsBeingDerps",
+        "me_irl",
     ],
     Vibe.WANDERING: [
         "hmmm",
         "AnimalsBeingDerps",
         "reactionpics",
+        "me_irl",
     ],
     Vibe.LOST_IN_SCROLL: [
         "reactionpics",
         "wunkus",
         "hmmm",
+        "me_irl",
     ],
     Vibe.TAB_BUTTERFLY: [
         "reactionpics",
         "AnimalsBeingDerps",
-        "blurrypicturesofcats",
+        "wunkus",
+        "hmmm",
     ],
     Vibe.STILLNESS: [
         "Eyebleach",
@@ -105,6 +111,7 @@ VIBE_SUBREDDITS: dict[Vibe, list[str]] = {
         "reactionpics",
         "Eyebleach",
         "AnimalsBeingDerps",
+        "me_irl",
     ],
     Vibe.AFTERNOON_DRIFT: [
         "Eyebleach",
@@ -395,18 +402,22 @@ def seed_in_background(
 
 
 def _get_target_reaction_subreddit(query: str) -> str:
-    """Map reaction queries to the most visually expressive subreddit."""
+    """Map reaction queries to high-quality, relatable meme communities."""
     q = query.lower()
-    if any(w in q for w in ["cat", "kitty", "feline", "meow"]):
-        return "blurrypicturesofcats"
+    if any(w in q for w in ["groov", "danc", "bopp", "sway", "bob", "vibe"]):
+        return "wunkus"
     if any(w in q for w in ["dog", "puppy", "bark", "otter"]):
         return "rarepuppers"
-    if any(w in q for w in ["groov", "danc", "bopp", "sway", "bob", "vibe", "chill"]):
-        return "wunkus"
-    if any(w in q for w in ["derp", "animal", "food", "cook", "eat"]):
+    if any(w in q for w in ["derp", "animal", "silly"]):
         return "AnimalsBeingDerps"
     if any(w in q for w in ["hmmm", "weird", "curious"]):
         return "hmmm"
+    if any(w in q for w in ["wholesome", "peace", "calm", "relax"]):
+        return "wholesomememes"
+    if any(w in q for w in ["code", "programming", "python", "bug", "syntax"]):
+        return "programmerhumor"
+    if any(w in q for w in ["relatable", "me irl", "sigh", "tired", "acceptance"]):
+        return "me_irl"
     return "reactionpics"
 
 
@@ -424,7 +435,7 @@ def search_live_contextual_meme(
       Tier 1: Targeted direct search on Reddit RSS.
       Tier 2: Instant resilient fetch via meme-api.com if Reddit RSS is rate-limited (429) or empty.
     Downloads fresh candidate images into a local 'live-cache/' directory.
-    Strictly excludes any memes present in `seen_ids` or `recent_memes` to prevent repeats forever.
+    Strictly excludes any memes present in `seen_ids`, `seen_hashes`, or `recent_memes` to prevent repeats forever.
     Returns the Path to the image, or None if completely offline.
     """
     candidates = [query] if isinstance(query, str) else query
@@ -439,12 +450,12 @@ def search_live_contextual_meme(
     if recent_memes:
         for m in recent_memes:
             if hasattr(m, "stem"):
-                recent_stems.add(m.stem)
+                recent_stems.add(m.stem.lower())
             elif isinstance(m, (str, Path)):
-                recent_stems.add(Path(m).stem)
+                recent_stems.add(Path(m).stem.lower())
 
-    # Try the most salient visual reaction query
-    for q_item in valid_candidates[:1]:
+    # Try up to top 3 salient visual reaction queries in sequence until a match is found
+    for q_item in valid_candidates[:3]:
         target_sub = _get_target_reaction_subreddit(q_item)
         logger.info(f"🔍 Searching live visual reaction for: '{q_item}' (targeting r/{target_sub})...")
 
@@ -474,32 +485,50 @@ def search_live_contextual_meme(
                         ext = Path(urlparse(direct_url).path).suffix.lower()
                         if ext not in VALID_IMAGE_EXTENSIONS:
                             ext = ".jpg"
-                        filename = f"live_{abs(hash(direct_url)) % 10000000}{ext}"
-                        cid = extract_canonical_id(filename)
+
+                        # Deterministic canonical ID from URL slug (stable across reboots)
+                        url_slug = Path(urlparse(direct_url).path).stem
+                        if not url_slug or len(url_slug) < 4:
+                            url_slug = hashlib.sha256(direct_url.encode("utf-8")).hexdigest()[:12]
+                        filename = f"live_{url_slug}{ext}"
+                        cid = url_slug.lower()
 
                         # Exclude any meme seen before in lifetime history
-                        if seen_ids and cid in seen_ids:
+                        if seen_ids and (cid in seen_ids or filename.lower() in seen_ids):
                             continue
                         save_path = cache_dir / filename
-                        if save_path.stem in recent_stems or save_path.name in recent_stems:
+                        if save_path.stem.lower() in recent_stems or save_path.name.lower() in recent_stems:
                             continue
-                        candidates_list.append((direct_url, save_path, filename))
+                        candidates_list.append((direct_url, save_path, filename, cid))
 
                     if candidates_list:
                         random.shuffle(candidates_list)
-                        for direct_url, save_path, filename in candidates_list:
+                        for direct_url, save_path, filename, cid in candidates_list:
                             if save_path.exists() and save_path.stat().st_size > 1000:
-                                if seen_hashes and compute_file_hash(save_path) in seen_hashes:
+                                f_hash = compute_file_hash(save_path)
+                                if seen_hashes and f_hash and f_hash.lower() in seen_hashes:
                                     continue
+                                if seen_ids is not None:
+                                    seen_ids.add(cid)
+                                    seen_ids.add(filename.lower())
+                                if seen_hashes is not None and f_hash:
+                                    seen_hashes.add(f_hash.lower())
                                 logger.info(f"🎯 Reusing cached unshown live meme: {filename} for '{q_item}'")
                                 return save_path
+
                             if _download_image(direct_url, save_path, timeout=timeout):
-                                if seen_hashes and compute_file_hash(save_path) in seen_hashes:
+                                f_hash = compute_file_hash(save_path)
+                                if seen_hashes and f_hash and f_hash.lower() in seen_hashes:
                                     try:
                                         save_path.unlink()
                                     except OSError:
                                         pass
                                     continue
+                                if seen_ids is not None:
+                                    seen_ids.add(cid)
+                                    seen_ids.add(filename.lower())
+                                if seen_hashes is not None and f_hash:
+                                    seen_hashes.add(f_hash.lower())
                                 logger.info(f"🎯 Downloaded live visual reaction: {filename} for '{q_item}'")
                                 _prune_cache(cache_dir, max_files=60)
                                 return save_path
@@ -512,6 +541,8 @@ def search_live_contextual_meme(
             api_subs = [target_sub]
             if target_sub != "reactionpics":
                 api_subs.append("reactionpics")
+            if "me_irl" not in api_subs:
+                api_subs.append("me_irl")
 
             for sub in api_subs:
                 posts = _fetch_from_meme_api(sub, count=15)
@@ -523,34 +554,51 @@ def search_live_contextual_meme(
                     img_url = post.get("url")
                     if not img_url:
                         continue
-                    post_id = post.get("id") or str(abs(hash(img_url)) % 10000000)
+                    post_id = post.get("id")
+                    if not post_id or len(str(post_id)) < 3:
+                        post_id = Path(urlparse(img_url).path).stem
+                    if not post_id or len(str(post_id)) < 3:
+                        post_id = hashlib.sha256(img_url.encode("utf-8")).hexdigest()[:12]
+
                     ext = Path(urlparse(img_url).path).suffix.lower()
                     if ext not in VALID_IMAGE_EXTENSIONS:
                         ext = ".jpg"
                     filename = f"live_{post_id}{ext}"
-                    cid = extract_canonical_id(filename)
+                    cid = str(post_id).lower()
 
                     # Exclude any meme seen before in lifetime history
-                    if seen_ids and cid in seen_ids:
+                    if seen_ids and (cid in seen_ids or filename.lower() in seen_ids):
                         continue
 
                     save_path = cache_dir / filename
-                    if save_path.stem in recent_stems or save_path.name in recent_stems:
+                    if save_path.stem.lower() in recent_stems or save_path.name.lower() in recent_stems:
                         continue
 
                     if save_path.exists() and save_path.stat().st_size > 1000:
-                        if seen_hashes and compute_file_hash(save_path) in seen_hashes:
+                        f_hash = compute_file_hash(save_path)
+                        if seen_hashes and f_hash and f_hash.lower() in seen_hashes:
                             continue
+                        if seen_ids is not None:
+                            seen_ids.add(cid)
+                            seen_ids.add(filename.lower())
+                        if seen_hashes is not None and f_hash:
+                            seen_hashes.add(f_hash.lower())
                         logger.info(f"🎯 Reusing cached unshown live reaction: {filename} for '{q_item}'")
                         return save_path
 
                     if _download_image(img_url, save_path, timeout=timeout):
-                        if seen_hashes and compute_file_hash(save_path) in seen_hashes:
+                        f_hash = compute_file_hash(save_path)
+                        if seen_hashes and f_hash and f_hash.lower() in seen_hashes:
                             try:
                                 save_path.unlink()
                             except OSError:
                                 pass
                             continue
+                        if seen_ids is not None:
+                            seen_ids.add(cid)
+                            seen_ids.add(filename.lower())
+                        if seen_hashes is not None and f_hash:
+                            seen_hashes.add(f_hash.lower())
                         logger.info(f"🎯 Downloaded live visual reaction: {filename} for '{q_item}' (from r/{sub})")
                         _prune_cache(cache_dir, max_files=60)
                         return save_path

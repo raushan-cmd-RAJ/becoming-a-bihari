@@ -174,3 +174,64 @@ class TestNeverRepeatEngine:
         chosen2 = r2.get_meme(Vibe.STILLNESS, current_time=200.0, cooldown=0)
         assert chosen2 is not None
         assert chosen2.name != chosen1.name
+
+    def test_incompatible_borrowing_protection(self, tmp_path):
+        """Verify that leisure/browsing vibes (TAB_BUTTERFLY) NEVER borrow from SYNTAX_RAGE (softwaregore)."""
+        meme_dir = tmp_path / "memes"
+        tab_folder = meme_dir / VIBE_FOLDER_NAMES[Vibe.TAB_BUTTERFLY]
+        rage_folder = meme_dir / VIBE_FOLDER_NAMES[Vibe.SYNTAX_RAGE]
+        tab_folder.mkdir(parents=True)
+        rage_folder.mkdir(parents=True)
+
+        # Tab folder only has 1 meme, rage folder has a software crash meme
+        (tab_folder / "tab_cat.png").write_bytes(b"tab meme")
+        (rage_folder / "reddit_softwaregore_error123.png").write_bytes(b"glitch screen")
+
+        db_file = tmp_path / "test_history.db"
+        r = MemeRetriever(meme_dir=meme_dir, cooldown_seconds=0, history_db=db_file, never_repeat=True)
+
+        # 1st call for TAB_BUTTERFLY returns tab_cat.png
+        m1 = r.get_meme(Vibe.TAB_BUTTERFLY, current_time=10.0, cooldown=0)
+        assert m1 is not None
+        assert m1.name == "tab_cat.png"
+
+        # 2nd call: tab folder exhausted. It must NEVER borrow softwaregore from SYNTAX_RAGE!
+        m2 = r.get_meme(Vibe.TAB_BUTTERFLY, current_time=20.0, cooldown=0)
+        assert m2 is None, "Should return None instead of borrowing incompatible syntax rage memes"
+
+    def test_hash_backfill_from_disk(self, tmp_path):
+        """Verify MemeRetriever automatically backfills missing file_hash from disk files."""
+        meme_dir = tmp_path / "memes"
+        zen_folder = meme_dir / VIBE_FOLDER_NAMES[Vibe.STILLNESS]
+        zen_folder.mkdir(parents=True)
+
+        target_file = zen_folder / "reddit_pic_zen.png"
+        target_file.write_bytes(b"sample unique binary content for hashing")
+        expected_hash = compute_file_hash(target_file)
+
+        db_file = tmp_path / "test_history.db"
+        conn = sqlite3.connect(str(db_file))
+        conn.execute("""
+            CREATE TABLE seen_memes (
+                meme_id TEXT PRIMARY KEY,
+                file_hash TEXT,
+                filename TEXT,
+                shown_at REAL
+            )
+        """)
+        # Insert with empty file_hash
+        conn.execute("INSERT INTO seen_memes VALUES (?, ?, ?, ?)", ("zen", "", "reddit_pic_zen.png", 500.0))
+        conn.commit()
+        conn.close()
+
+        # Initializing MemeRetriever should automatically backfill the hash from disk
+        r = MemeRetriever(meme_dir=meme_dir, cooldown_seconds=0, history_db=db_file, never_repeat=True)
+        assert expected_hash in r.seen_hashes
+
+        # Verify SQLite row was updated
+        conn = sqlite3.connect(str(db_file))
+        cur = conn.cursor()
+        cur.execute("SELECT file_hash FROM seen_memes WHERE meme_id = 'zen'")
+        row = cur.fetchone()
+        conn.close()
+        assert row[0] == expected_hash

@@ -17,6 +17,7 @@ Architecture:
 
 import os
 import sys
+import re
 import math
 import json
 import hashlib
@@ -378,11 +379,11 @@ class MicroBrain:
             "sports_and_fitness": Vibe.LOST_IN_SCROLL,
             "pop_culture_and_movies": Vibe.LOST_IN_SCROLL,
             "wholesome_animals": Vibe.STILLNESS,
-            "relatable_life_struggles": Vibe.BURNOUT_APPROACHING,
+            "relatable_life_struggles": Vibe.LOST_IN_SCROLL,
             "deep_thoughts_philosophy": Vibe.WANDERING,
             "technical_learning_and_code": Vibe.FLOW_STATE,
             "work_email_communication": Vibe.FLOW_STATE,
-            "reading_articles_and_news": Vibe.FLOW_STATE,
+            "reading_articles_and_news": Vibe.WANDERING,
             "mindless_social_scrolling": Vibe.LOST_IN_SCROLL,
         }
 
@@ -400,6 +401,22 @@ class MicroBrain:
             "work_email_communication": "tired_acceptance",
             "reading_articles_and_news": "deep_contemplation",
             "mindless_social_scrolling": "side_eye_scrolling",
+        }
+
+        theme_search_queries = {
+            "comedy_and_humor": ["crying laughing", "wheezing", "snicker"],
+            "food_and_cooking": ["food craving", "hungry", "delicious", "drooling"],
+            "scenic_views_and_nature": ["peaceful moment", "daydreaming", "mesmerized"],
+            "music_and_dance": ["vibing", "grooving", "head bob", "dancing"],
+            "sports_and_fitness": ["gym", "workout", "exhausted", "jaw drop"],
+            "pop_culture_and_movies": ["eating popcorn", "side eye", "staring in disbelief"],
+            "wholesome_animals": ["wholesome smile", "peaceful", "gentle moment"],
+            "relatable_life_struggles": ["tired acceptance", "it is what it is", "sigh"],
+            "deep_thoughts_philosophy": ["existential stare", "thinking monkey", "galaxy brain"],
+            "technical_learning_and_code": ["confused math", "taking notes", "mind blown"],
+            "work_email_communication": ["tired acceptance", "staring into soul", "sigh"],
+            "reading_articles_and_news": ["intense stare", "taking notes", "contemplating"],
+            "mindless_social_scrolling": ["blank stare", "doomscrolling", "monkey puppet looking away"],
         }
 
         # Extract specific subject from OCR words
@@ -426,12 +443,23 @@ class MicroBrain:
             "mindless_social_scrolling": f"Scrolling: {s_clean}",
         }
 
+        curated = list(theme_search_queries.get(theme, ["blank stare", "side eye"]))
+        # Only prepend s_clean if it represents substantive, non-gibberish words
+        noise_words = {
+            "said", "hand", "just", "dont", "ask", "touch", "balls", "dimensions",
+            "trainer", "one", "ycm", "peor", "regneant", "tryi", "sprayer", "regneant"
+        }
+        if s_clean and s_clean != "the feed" and len(s_clean) >= 4:
+            clean_tokens = [w for w in re.findall(r"[a-zA-Z]+", s_clean.lower()) if len(w) >= 3]
+            if clean_tokens and not any(w in noise_words for w in clean_tokens):
+                curated.insert(0, s_clean)
+
         return {
             "human_theme": theme,
             "reaction_vibe": reaction_map.get(theme, "side_eye_scrolling"),
             "vibe": vibe_map.get(theme, Vibe.LOST_IN_SCROLL),
             "reflection": reflection_templates.get(theme, f"Invested in: {s_clean}"),
-            "search_queries": [s_clean, theme.replace("_", " ")],
+            "search_queries": curated,
             "confidence": conf,
         }
 

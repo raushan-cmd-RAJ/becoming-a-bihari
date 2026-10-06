@@ -145,8 +145,8 @@ class MemeOverlay:
         self._current_label = label
 
         # Dimensions: text-only card is shorter and sleeker
-        toast_w = max(self.width, 360)
-        toast_h = self.height if has_image else 125
+        toast_w = max(self.width, 360) if not has_image else self.width
+        toast_h = 135 if not has_image else self.height
 
         try:
             # ── Create Toast Window ──
@@ -279,7 +279,7 @@ class MemeOverlay:
             if self.slide_animation:
                 y_start = screen_h
                 win.geometry(f"{toast_w}x{toast_h}+{x}+{y_start}")
-                self._animate_slide(win, x, y_start, y_final, steps=12)
+                self._animate_slide(win, x, y_start, y_final, steps=12, w=toast_w, h=toast_h)
             else:
                 win.geometry(f"{toast_w}x{toast_h}+{x}+{y_final}")
 
@@ -288,20 +288,32 @@ class MemeOverlay:
         except Exception as e:
             logger.error(f"Error displaying reflection card: {e}", exc_info=True)
 
-    def _animate_slide(self, win: tk.Toplevel, x: int, y_current: float, y_target: int, steps: int):
-        """Smooth slide-up animation."""
+    def _animate_slide(
+        self,
+        win: tk.Toplevel,
+        x: int,
+        y_current: float,
+        y_target: int,
+        steps: int,
+        w: Optional[int] = None,
+        h: Optional[int] = None,
+    ):
+        """Smooth slide-up animation maintaining actual window dimensions."""
         if steps <= 0 or not win.winfo_exists():
             return
+
+        target_w = w if w is not None else self.width
+        target_h = h if h is not None else self.height
 
         dy = (y_target - y_current) / steps
         new_y = int(y_current + dy)
 
         try:
-            win.geometry(f"{self.width}x{self.height}+{x}+{new_y}")
+            win.geometry(f"{target_w}x{target_h}+{x}+{new_y}")
         except tk.TclError:
             return
 
-        win.after(16, lambda: self._animate_slide(win, x, new_y, y_target, steps - 1))
+        win.after(16, lambda: self._animate_slide(win, x, new_y, y_target, steps - 1, w=target_w, h=target_h))
 
     def _pause_dismiss(self):
         """Pause auto-dismiss timer on mouse hover."""

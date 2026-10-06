@@ -345,11 +345,14 @@ def extract_browser_context(app: str, title: str) -> Optional[WindowContext]:
             chosen_query = random.choice(unused) if unused else random.choice(reaction_queries)
             _recent_video_queries.append(chosen_query)
 
+            # Only short-form vertical feeds (Shorts) are treated as social trance
+            is_shorts = any(k in cleaned.lower() for k in ["shorts", "#shorts", "/shorts/"])
+
             return WindowContext(
                 subject=clean_sub,
                 category="video",
                 is_specific=True,
-                is_social=True,
+                is_social=is_shorts,
                 search_query=chosen_query,
             )
 
@@ -389,14 +392,18 @@ def extract_browser_context(app: str, title: str) -> Optional[WindowContext]:
         social_title = re.sub(r"\s*[-—•|]\s*(instagram|tiktok).*$", "", cleaned, flags=re.IGNORECASE)
         social_title = _clean_str(social_title)
         social_title = re.sub(r"^\(\d+\)\s*", "", social_title)
-        random_reaction = random.choice(["side eye", "monkey puppet looking away", "cat staring", "blank stare", "eating popcorn"])
+        social_queries = ["side eye", "monkey puppet looking away", "blank stare", "doomscrolling", "eating popcorn", "staring into soul"]
+        unused_social = [q for q in social_queries if q not in _recent_video_queries]
+        chosen_reaction = random.choice(unused_social if unused_social else social_queries)
+        _recent_video_queries.append(chosen_reaction)
+
         if not social_title or social_title.lower() in {"", "instagram", "reels"}:
             return WindowContext(
                 subject="Instagram Reels",
                 category="social",
                 is_specific=True,
                 is_social=True,
-                search_query=random_reaction,
+                search_query=chosen_reaction,
             )
         if len(social_title) >= 3:
             clean_sub = clean_media_subject(social_title)
@@ -405,7 +412,7 @@ def extract_browser_context(app: str, title: str) -> Optional[WindowContext]:
                 category="social",
                 is_specific=True,
                 is_social=True,
-                search_query=random_reaction,
+                search_query=chosen_reaction,
             )
 
     # 5. Google Search / DuckDuckGo / Bing
