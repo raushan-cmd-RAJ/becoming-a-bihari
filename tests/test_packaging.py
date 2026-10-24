@@ -59,10 +59,10 @@ class TestPyInstallerSpec:
         assert 'name="vihara"' in self.content or "name='vihara'" in self.content
 
     def test_spec_bundles_required_data_files(self):
-        """vihara.spec must bundle config.toml, default pack (.lucidpack), and meme assets."""
+        """vihara.spec must bundle config.toml and memes/ assets, while default.lucidpack is excluded to keep release package lightweight."""
         assert "config.toml" in self.content, "vihara.spec must bundle config.toml"
-        assert "default.lucidpack" in self.content, (
-            "vihara.spec must bundle default.lucidpack"
+        assert "default.lucidpack" not in self.content, (
+            "vihara.spec must not bundle default.lucidpack to keep download lightweight (memes auto-seed on startup)"
         )
         assert "memes" in self.content, "vihara.spec must bundle memes/ assets"
 

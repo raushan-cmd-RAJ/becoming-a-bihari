@@ -30,6 +30,8 @@ DEFAULTS: dict[str, Any] = {
         "social_cooldown_seconds": 60,
         "idle_timeout_seconds": 300,
         "never_repeat": True,
+        "repeat_cooloff_days": 30,  # Days before seen memes can re-enter rotation (0 = permanent)
+        "max_seen_history_files": 10,  # Maximum seen meme images to retain on disk before auto-purging
     },
     "paths": {
         "meme_dir": "",  # Empty = %LOCALAPPDATA%\Vihara\memes (with fallback to %LOCALAPPDATA%\Bihari\memes)
@@ -65,7 +67,7 @@ DEFAULTS: dict[str, Any] = {
         "slide_animation": True,
     },
     "fetcher": {
-        "online_fetch": False,
+        "online_fetch": True,
         "min_threshold": 3,
         "target_count": 10,
     },

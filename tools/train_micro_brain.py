@@ -51,27 +51,52 @@ def generate_vibe_training_data() -> list[dict]:
     # FLOW_STATE
     add(
         Vibe.FLOW_STATE,
-        ["code.exe", "devenv.exe", "pycharm64.exe", "alacritty.exe", "wezterm-gui.exe", "nvim.exe"],
+        [
+            "code.exe",
+            "cursor.exe",
+            "devenv.exe",
+            "pycharm64.exe",
+            "alacritty.exe",
+            "wezterm-gui.exe",
+            "nvim.exe",
+            "zed.exe",
+            "rider64.exe",
+            "powershell.exe",
+            "windowsterminal.exe",
+            "cmd.exe",
+            "wt.exe",
+            "bash.exe",
+            "wsl.exe",
+        ],
         [
             "engine.rs - Vihara - Visual Studio Code",
             "auth_handler.py - backend-api - PyCharm",
             "feature/telemetry - micro_brain.py - VS Code",
             "src/components/Header.tsx - frontend",
-            "main.go - distributed-kv-store",
-            "server.cpp - high-frequency-trading",
+            "main.go - distributed-kv-store - Cursor",
+            "server.cpp - high-frequency-trading - Neovim",
             "document.tex - NeurIPS Paper - TeXstudio",
+            "app.vue - dashboard-client - Visual Studio Code",
+            "queries.sql - analytics-pipeline - DataGrip",
+            "lib.rs - micro-inference - Zed",
+            "Administrator: Windows PowerShell - git status && pytest tests/",
+            "Windows PowerShell - npm run build",
+            "Windows Terminal - cargo build --release",
+            "cmd.exe - python manage.py runserver",
+            "bash - docker-compose up -d",
+            "wsl - nvim index.ts",
         ],
-        cpm_range=(55, 95),
-        bs_range=(0.01, 0.07),
+        cpm_range=(45, 95),
+        bs_range=(0.01, 0.08),
         switch_range=(0, 2),
-        dwell_range=(10.0, 45.0),
-        count=100,
+        dwell_range=(5.0, 50.0),
+        count=150,
     )
 
     # SYNTAX_RAGE
     add(
         Vibe.SYNTAX_RAGE,
-        ["code.exe", "windowsterminal.exe", "powershell.exe", "cmd.exe", "pycharm64.exe"],
+        ["code.exe", "cursor.exe", "windowsterminal.exe", "powershell.exe", "cmd.exe", "pycharm64.exe", "nvim.exe"],
         [
             "TypeError: Cannot read properties of undefined (reading 'map') - Terminal",
             "SyntaxError: invalid syntax (line 42) - Visual Studio Code",
@@ -80,12 +105,15 @@ def generate_vibe_training_data() -> list[dict]:
             "IndexError: list index out of range - debug console",
             "git merge conflict in src/database/connection.py",
             "FAILED tests/test_auth.py::test_jwt_expiration",
+            "error[E0382]: use of moved value: `user_session`",
+            "ReferenceError: process is not defined at Object.render",
+            "Build failed with 3 compilation errors - Cursor",
         ],
         cpm_range=(25, 70),
         bs_range=(0.35, 0.75),
         switch_range=(1, 5),
         dwell_range=(4.0, 25.0),
-        count=100,
+        count=120,
     )
 
     # HELP_SEEKING
@@ -100,30 +128,35 @@ def generate_vibe_training_data() -> list[dict]:
             "ChatGPT - Why is my useEffect running twice in development?",
             "Claude - Debugging Windows Media OCR access violation in C++",
             "GitHub Issues - #1423 Build fails on Windows 11 24H2",
+            "MDN Web Docs - Array.prototype.reduce() syntax and examples",
+            "FastAPI Official Tutorial - Dependency Injection",
+            "Stack Overflow - How to mock database calls in pytest",
         ],
         cpm_range=(5, 30),
         bs_range=(0.05, 0.15),
         switch_range=(3, 8),
         dwell_range=(2.0, 10.0),
-        count=90,
+        count=110,
     )
 
     # MOUNTING_FRICTION
     add(
         Vibe.MOUNTING_FRICTION,
-        ["code.exe", "chrome.exe", "slack.exe", "windowsterminal.exe"],
+        ["code.exe", "chrome.exe", "slack.exe", "windowsterminal.exe", "cursor.exe"],
         [
             "Jira - Bug PROD-881: User session abruptly terminating",
             "Sentry Issue: 500 Internal Server Error in /api/v1/checkout",
             "Postman - POST https://api.prod.company.internal/token (504 Gateway Timeout)",
             "Datadog Dashboard - CPU Spike on Worker Pods",
             "Docker Desktop - Container exited with code 137 (OOMKilled)",
+            "Grafana - 5xx Error Rate Anomaly Detected",
+            "AWS Console - CloudWatch Alarm: RDS Memory Low",
         ],
         cpm_range=(15, 45),
         bs_range=(0.18, 0.32),
         switch_range=(6, 14),
         dwell_range=(1.0, 8.0),
-        count=80,
+        count=100,
     )
 
     # LOST_IN_SCROLL
@@ -138,18 +171,20 @@ def generate_vibe_training_data() -> list[dict]:
             "TikTok - POV: Trying to leave the office at 5 PM on a Friday",
             "Twitch - Shroud playing Valorant ranked matches",
             "Netflix - The Great British Baking Show - Episode 4",
+            "YouTube Shorts - Hydraulic press vs bowling ball",
+            "Reddit - r/mildlyinteresting: This rock looks like a baked potato",
         ],
         cpm_range=(0, 8),
         bs_range=(0.0, 0.05),
         switch_range=(0, 3),
         dwell_range=(15.0, 75.0),
-        count=110,
+        count=120,
     )
 
     # WANDERING
     add(
         Vibe.WANDERING,
-        ["chrome.exe", "edge.exe", "brave.exe"],
+        ["chrome.exe", "edge.exe", "brave.exe", "firefox.exe"],
         [
             "Bronze Age Collapse - Wikipedia, the free encyclopedia",
             "Hacker News - Show HN: A minimalist markdown notes app in Zig",
@@ -157,18 +192,20 @@ def generate_vibe_training_data() -> list[dict]:
             "The Verge - Best wireless mechanical keyboards of 2026",
             "Zillow - Luxury mountain chalets in Swiss Alps with scenic views",
             "Wikipedia - List of unusual deaths throughout history",
+            "ArXiv - Attention Is All You Need Paper Review",
+            "Medium - Ten years of building distributed databases",
         ],
         cpm_range=(2, 18),
         bs_range=(0.02, 0.12),
         switch_range=(2, 6),
         dwell_range=(8.0, 35.0),
-        count=90,
+        count=100,
     )
 
     # TAB_BUTTERFLY
     add(
         Vibe.TAB_BUTTERFLY,
-        ["chrome.exe", "msedge.exe", "firefox.exe"],
+        ["chrome.exe", "msedge.exe", "firefox.exe", "brave.exe"],
         [
             "Amazon.com: Ergonomic Office Chair & Mechanical Keyboards",
             "Hacker News (New Comments)",
@@ -176,47 +213,51 @@ def generate_vibe_training_data() -> list[dict]:
             "YouTube Subscriptions Feed",
             "Gmail - Inbox (3)",
             "Google Calendar - October 2026",
+            "GitHub Notifications - Pull Requests",
+            "Trello Board - Sprint 42",
         ],
         cpm_range=(5, 25),
         bs_range=(0.05, 0.18),
         switch_range=(10, 24),
         dwell_range=(0.2, 1.8),
-        count=90,
+        count=100,
     )
 
     # GRINDING
     add(
         Vibe.GRINDING,
-        ["excel.exe", "code.exe", "devenv.exe", "figma.exe", "blender.exe"],
+        ["excel.exe", "code.exe", "devenv.exe", "figma.exe", "blender.exe", "cursor.exe"],
         [
             "Q3_Financial_Projections_Final_v4.xlsx - Excel",
             "Design System V3 - Components & Tokens - Figma",
             "Blender 4.2 - sci_fi_mech_rig_highpoly.blend",
             "DataCleaning_Pipeline_batch_processing.py",
             "Refactoring Legacy Auth Controller (Line 1420/2800)",
+            "DatabaseMigration_v2_to_v3_part4.sql",
         ],
         cpm_range=(35, 60),
         bs_range=(0.06, 0.14),
         switch_range=(1, 4),
         dwell_range=(55.0, 180.0),
-        count=80,
+        count=100,
     )
 
     # BURNOUT_APPROACHING
     add(
         Vibe.BURNOUT_APPROACHING,
-        ["code.exe", "slack.exe", "chrome.exe"],
+        ["code.exe", "slack.exe", "chrome.exe", "cursor.exe"],
         [
             "VS Code - late night marathon session (02:45 AM)",
             "Slack - #general: 'Anyone still up to check this deployment?'",
             "Staring at cursor blinking for 4 minutes",
             "Fatigue sets in - typing slows down",
+            "14th hour at the screen today - burning eyes",
         ],
         cpm_range=(12, 28),
         bs_range=(0.14, 0.28),
         switch_range=(2, 6),
         dwell_range=(90.0, 240.0),
-        count=75,
+        count=90,
     )
 
     # STILLNESS
@@ -228,12 +269,13 @@ def generate_vibe_training_data() -> list[dict]:
             "Windows Lock Screen",
             "Screensaver Active",
             "Away From Keyboard (No input for 10 minutes)",
+            "Blank Screen - Sleep Mode",
         ],
         cpm_range=(0, 0),
         bs_range=(0.0, 0.0),
         switch_range=(0, 0),
         dwell_range=(15.0, 60.0),
-        count=60,
+        count=80,
     )
 
     # MEETING_RECOVERY
@@ -245,29 +287,31 @@ def generate_vibe_training_data() -> list[dict]:
             "Zoom Meeting - Meeting Ended by Host",
             "Post-Call Catchup & Sighing",
             "Google Meet - You have left the call",
+            "Webex Meeting Ended - Audio Disconnected",
         ],
         cpm_range=(2, 12),
         bs_range=(0.0, 0.06),
         switch_range=(1, 3),
         dwell_range=(1.0, 6.0),
-        count=70,
+        count=80,
     )
 
     # AFTERNOON_DRIFT
     add(
         Vibe.AFTERNOON_DRIFT,
-        ["chrome.exe", "edge.exe", "spotify.exe"],
+        ["chrome.exe", "edge.exe", "spotify.exe", "brave.exe"],
         [
             "2:30 PM slump - Low Energy Beats & Lo-fi Hip Hop - Spotify",
             "Reading random travel blogs about Japan in autumn",
             "Checking local coffee shop reviews",
             "Mid-afternoon drowsiness and staring at wallpaper",
+            "Ambient Study Music • 3 hours of quiet rain sound",
         ],
         cpm_range=(5, 18),
         bs_range=(0.04, 0.12),
         switch_range=(2, 5),
         dwell_range=(10.0, 30.0),
-        count=70,
+        count=80,
     )
 
     return data

@@ -30,6 +30,14 @@ warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*laya: this
 logger = logging.getLogger(__name__)
 
 
+def _get_onnx_brain():
+    try:
+        from .onnx_brain import ONNXBrain
+        return ONNXBrain
+    except Exception:
+        return None
+
+
 def _get_micro_brain():
     try:
         from .micro_model import MicroBrain
@@ -1028,14 +1036,11 @@ class LayaBridge:
         """Check if Laya is installed without loading the model into RAM."""
         if self._available is None:
             try:
-                import laya.agent  # noqa: F401
+                import importlib
+                importlib.import_module("laya.agent")
                 self._available = True
-            except ImportError:
+            except (ImportError, Exception):
                 self._available = False
-                logger.warning(
-                    "Laya is not installed. Using rule-based classification only. "
-                    "Install with: pip install laya"
-                )
         return self._available
 
     def _ensure_loaded(self):
@@ -1043,13 +1048,14 @@ class LayaBridge:
         if self._agent is None:
             try:
                 logger.info("Loading Laya Agent ('convaiinnovations/laya')...")
+                import importlib
                 try:
-                    import torch
-                    torch.set_num_threads(min(2, os.cpu_count() or 2))
+                    torch_mod = importlib.import_module("torch")
+                    torch_mod.set_num_threads(min(2, os.cpu_count() or 2))
                 except Exception:
                     pass
-                from laya.agent import Agent
-                self._agent = Agent("convaiinnovations/laya")
+                laya_agent_mod = importlib.import_module("laya.agent")
+                self._agent = laya_agent_mod.Agent("convaiinnovations/laya")
                 logger.info("Laya Agent loaded successfully.")
             except Exception as e:
                 logger.warning(f"Failed to load Laya Agent (running in offline/rules fallback): {e}")
@@ -1252,6 +1258,9 @@ class LayaBridge:
                 "mindless_social_scrolling": Vibe.LOST_IN_SCROLL,
             }
             mapped_vibe = vibe_map.get(theme, Vibe.FLOW_STATE)
+            is_social = any(s in app_name.lower() or s in window_title.lower() for s in ["instagram", "tiktok", "reels", "shorts", "twitter", "x.com", "reddit", "facebook"])
+            if is_social and mapped_vibe in (Vibe.FLOW_STATE, Vibe.GRINDING):
+                mapped_vibe = Vibe.WANDERING
 
             # Extract specific subject from OCR text for personalized reflection
             from .ocr import extract_caption_keywords
@@ -1445,7 +1454,8 @@ MINDFUL_THEME_REFLECTIONS = {
 
 class VibeClassifier:
     """
-    Hybrid classifier: rules first, Laya for ambiguous cases.
+    Hybrid classifier: rules first, ONNX mini-transformer (Option B) for semantic
+    accuracy, MicroBrain (Option A) for zero-dependency backup, Laya for legacy dev.
 
     This is the primary classification interface.
     """
@@ -1459,7 +1469,13 @@ class VibeClassifier:
         self.use_laya = use_laya
         self.laya_bridge = LayaBridge() if use_laya else None
 
-        # MicroBrain: Zero-dependency, on-device decision intelligence (<500 KB, <0.5ms)
+        # Option B: ONNX Semantic Decision Intelligence (~23MB, System 1 precision)
+        onnx_cls = _get_onnx_brain()
+        self.onnx_brain = onnx_cls(enable_learning=enable_learning) if onnx_cls else None
+        if self.onnx_brain and not self.onnx_brain.is_available():
+            self.onnx_brain = None
+
+        # Option A: MicroBrain 2.0 (Zero-dependency, on-device decision intelligence, <800 KB, <0.5ms)
         micro_cls = _get_micro_brain()
         self.micro_brain = micro_cls(enable_learning=enable_learning) if micro_cls else None
 
@@ -1475,12 +1491,17 @@ class VibeClassifier:
 
     def classify_screen_content(self, screen_text: str, app_name: str, window_title: str) -> dict:
         """Helper to classify on-screen OCR content into mindfulness theme & reflection."""
-        # 1. Primary: Instant on-device MicroBrain (<0.5ms, zero dependencies)
+        # 1. Primary: Option B ONNX Semantic mini-transformer
+        if self.onnx_brain:
+            res = self.onnx_brain.classify_screen_content(screen_text, app_name, window_title)
+            if res:
+                return res
+        # 2. Backup: Option A MicroBrain (<0.5ms, zero dependencies)
         if self.micro_brain:
             res = self.micro_brain.classify_screen_content(screen_text, app_name, window_title)
             if res:
                 return res
-        # 2. Secondary: Laya fallback if installed and available
+        # 3. Tertiary: Laya fallback if installed and available
         if self.laya_bridge and self.laya_bridge.is_available():
             return self.laya_bridge.classify_screen_content(screen_text, app_name, window_title)
         return {}
@@ -1489,34 +1510,55 @@ class VibeClassifier:
         """
         Classify a TelemetryEvent into a Vibe.
 
-        Steps:
-          1. Try deterministic rules (instant, 0% CPU)
-          2. If ambiguous, run MicroBrain (instant <0.5ms on-device decision model)
-          3. If MicroBrain uncertain or disabled, try Laya (if installed/available)
-          4. Default heuristic fallback (0% CPU)
+        Hierarchy:
+          1. Deterministic rules (instant, 0% CPU)
+          2. Option B: ONNX Semantic mini-transformer (System 1 precision, ~5-15ms CPU)
+          3. Option A: MicroBrain 2.0 (pure-Python fallback, <0.5ms)
+          4. Legacy Laya fallback (if installed in dev environment)
+          5. Default heuristic fallback (0% CPU)
         """
         # Step 1: Rules
         result = classify_by_rules(event)
         if result is not None:
-            logger.debug(f"Rules classified: {result}")
-            return result
+            # If rules gave an ambiguous orientation/settling fallback (WANDERING with dwell < 5.0 in work context)
+            # and an intelligent ML model (ONNX or MicroBrain) is available, defer settling to the ML model!
+            app = getattr(event, "app_name", "").lower()
+            dwell_min = getattr(event, "dwell_minutes", -1.0)
+            is_work = (app in WORK_APPS) or any(t in app for t in ["powershell", "cmd", "terminal", "wt.exe", "bash", "wsl", "code", "cursor", "nvim"])
+            if result.vibe == Vibe.WANDERING and is_work and 0.0 <= dwell_min < 5.0 and allow_laya:
+                if self.onnx_brain or self.micro_brain:
+                    result = None
+
+            if result is not None:
+                logger.debug(f"Rules classified: {result}")
+                return result
 
         trigger = getattr(event, "trigger_reason", "")
 
-        # Step 2: MicroBrain on-device decision model (0% CPU, <0.5ms)
+        # Step 2: Option B - ONNX Semantic mini-transformer (<15ms CPU, System 1 precision)
+        if allow_laya and trigger != "dwell_tick" and self.onnx_brain:
+            try:
+                onnx_res = self.onnx_brain.classify_vibe(event)
+                if onnx_res and onnx_res.confidence >= 0.40:
+                    logger.debug(f"ONNXBrain classified: {onnx_res}")
+                    return onnx_res
+            except Exception as e:
+                logger.warning(f"ONNXBrain inference failed, falling back to MicroBrain: {e}")
+
+        # Step 3: Option A - MicroBrain 2.0 (pure-Python fallback, <0.5ms)
         if allow_laya and trigger != "dwell_tick" and self.micro_brain:
             micro_res = self.micro_brain.classify_vibe(event)
-            if micro_res.confidence >= 0.50:
+            if micro_res.confidence >= 0.45:
                 logger.debug(f"MicroBrain classified: {micro_res}")
                 return micro_res
 
-        # Step 3: Laya fallback (if installed in dev environment)
+        # Step 4: Laya fallback (if installed in dev environment)
         if allow_laya and trigger != "dwell_tick" and self.laya_bridge and self.laya_bridge.is_available():
             result = self.laya_bridge.classify(event)
             logger.debug(f"Laya classified: {result}")
             return result
 
-        # Step 4: Fast default fallback (0% CPU)
+        # Step 5: Fast default fallback (0% CPU)
         app = event.app_name.lower()
         title = getattr(event, "window_title", "").lower()
         dwell_min = getattr(event, "dwell_minutes", -1)
@@ -1537,5 +1579,7 @@ class VibeClassifier:
 
     def adapt_user_vibe(self, event, target_vibe: Any, was_positive: bool = True) -> None:
         """On-device continuous personalization (100% private, zero cloud)."""
+        if self.onnx_brain:
+            self.onnx_brain.adapt_vibe(event, target_vibe, was_positive=was_positive)
         if self.micro_brain:
             self.micro_brain.adapt_vibe(event, target_vibe, was_positive=was_positive)

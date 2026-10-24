@@ -20,6 +20,13 @@ idle_timeout_seconds = 300
 # Strict lifetime zero-repeat mode: never show a meme twice ever again
 never_repeat = true
 
+# Cool-off period in days after which a previously seen meme can naturally re-enter rotation
+# Set to 0 or leave empty for permanent never-repeat
+repeat_cooloff_days = 30
+
+# Maximum number of seen meme files to retain on disk before automatically purging older ones
+max_seen_history_files = 10
+
 [paths]
 # Leave empty to use default: %LOCALAPPDATA%\Bihari\memes
 meme_dir = ""

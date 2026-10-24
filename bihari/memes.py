@@ -12,6 +12,7 @@ import collections
 import logging
 import hashlib
 import re
+import time
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -126,6 +127,8 @@ class MemeRetriever:
         history_db: Optional[Path] = None,
         pack_manager: Optional[Any] = None,
         never_repeat: bool = False,
+        repeat_cooloff_days: float = 0.0,
+        max_seen_history_files: int = 10,
     ):
         """
         Args:
@@ -133,13 +136,17 @@ class MemeRetriever:
             cooldown_seconds: Minimum seconds between meme displays.
             history_db: Path to vibe_history.db for persistent cross-session deduplication.
             pack_manager: Optional PackManager instance for loaded .lucidpack memes.
-            never_repeat: Strict zero-repeat mode — never show a meme twice ever.
+            never_repeat: Strict zero-repeat mode — never show a meme twice within cooloff.
+            repeat_cooloff_days: Days after which a seen meme can re-enter rotation (0 = permanent).
+            max_seen_history_files: Maximum seen meme images to retain on disk before auto-purging.
         """
         self.meme_dir = Path(meme_dir)
         self.cooldown = cooldown_seconds
         self.pack_manager = pack_manager
         self.never_repeat = never_repeat
         self.history_db = Path(history_db) if history_db else None
+        self.repeat_cooloff_days = repeat_cooloff_days
+        self.max_seen_history_files = max_seen_history_files
 
         # Track lifetime seen IDs and content hashes
         self._seen_ids: set[str] = set()
@@ -188,6 +195,17 @@ class MemeRetriever:
                         )
                 conn.commit()
 
+            # Cool-off period check: purge expired cooloff records so older memes can re-enter rotation
+            now = time.time()
+            cooloff_threshold = 0.0
+            if self.repeat_cooloff_days and self.repeat_cooloff_days > 0:
+                cooloff_threshold = now - (self.repeat_cooloff_days * 86400.0)
+                cursor.execute(
+                    "DELETE FROM seen_memes WHERE shown_at > 0 AND shown_at < ?",
+                    (cooloff_threshold,),
+                )
+                conn.commit()
+
             cursor.execute("SELECT meme_id, file_hash, filename, shown_at FROM seen_memes")
             rows = cursor.fetchall()
 
@@ -200,12 +218,16 @@ class MemeRetriever:
 
             backfilled_updates = []
             for meme_id, f_hash, filename, shown_at in rows:
+                s_time = float(shown_at or 0.0)
+                if cooloff_threshold > 0 and s_time > 0 and s_time < cooloff_threshold:
+                    continue  # Cooloff expired, allow meme to be seen again!
+
                 if meme_id:
                     self._seen_ids.add(meme_id.lower())
                 if filename:
                     self._seen_ids.add(filename.lower())
                     self._recent.append(filename)
-                    self._last_shown_map[filename] = float(shown_at or 0.0)
+                    self._last_shown_map[filename] = s_time
 
                 # Backfill file_hash if empty and file is present on disk
                 if not f_hash and filename and filename.lower() in disk_files:
@@ -233,7 +255,7 @@ class MemeRetriever:
             logger.info(
                 f"Loaded {len(self._seen_ids)} lifetime seen memes and "
                 f"{len(self._seen_hashes)} content hashes from database "
-                f"(never_repeat={self.never_repeat})."
+                f"(never_repeat={self.never_repeat}, cooloff={self.repeat_cooloff_days}d)."
             )
         except Exception as e:
             logger.warning(f"Could not load meme history from DB: {e}")
@@ -360,6 +382,56 @@ class MemeRetriever:
                 except Exception as e:
                     logger.debug(f"Failed to persist seen meme {name}: {e}")
 
+            # Auto-prune older seen memes from disk to keep storage bounded
+            if self.max_seen_history_files and self.max_seen_history_files > 0:
+                self.prune_seen_memes(max_retained=self.max_seen_history_files)
+
+    def prune_seen_memes(self, max_retained: Optional[int] = None) -> int:
+        """
+        Purge older seen meme images from local disk storage to prevent disk bloating,
+        while preserving their seen status in SQLite history and memory.
+        """
+        if max_retained is None:
+            max_retained = self.max_seen_history_files
+
+        if not self.history_db or not self.history_db.exists():
+            return 0
+
+        purged = 0
+        try:
+            import sqlite3
+            conn = sqlite3.connect(str(self.history_db), timeout=2.0)
+            cursor = conn.cursor()
+            cursor.execute("SELECT filename FROM seen_memes ORDER BY shown_at DESC")
+            seen_filenames = [row[0] for row in cursor.fetchall() if row[0] and isinstance(row[0], str)]
+            conn.close()
+
+            if len(seen_filenames) <= max_retained:
+                return 0
+
+            # Most recent N filenames are preserved on disk
+            keep_set = {f.lower() for f in seen_filenames[:max_retained] if f}
+            candidates_to_purge = {f.lower() for f in seen_filenames[max_retained:] if f}
+
+            if self.meme_dir.exists():
+                for p in self.meme_dir.rglob("*"):
+                    if not p.is_file() or p.suffix.lower() not in self.VALID_EXTENSIONS:
+                        continue
+                    name_lower = p.name.lower()
+                    if name_lower in candidates_to_purge and name_lower not in keep_set:
+                        try:
+                            p.unlink()
+                            purged += 1
+                        except OSError:
+                            pass
+
+            if purged > 0:
+                logger.info(f"🧹 Purged {purged} older seen memes from disk (retaining {max_retained} most recent).")
+        except Exception as e:
+            logger.debug(f"Error while pruning seen memes: {e}")
+
+        return purged
+
     def get_meme(self, vibe: Vibe, current_time: float, cooldown: Optional[float] = None) -> Optional[Path]:
         """
         Select a random meme for the given vibe.
@@ -433,14 +505,40 @@ class MemeRetriever:
             return None
 
         if self.never_repeat:
-            # ── STRICT NEVER-REPEAT MODE ──
-            # Completely eliminate any meme whose canonical ID or content hash was ever seen
-            eligible = [
-                c for c in candidates
-                if extract_canonical_id(c.name).lower() not in self._seen_ids
-                and c.name.lower() not in self._seen_ids
-                and (not self.get_file_hash(c) or self.get_file_hash(c).lower() not in self._seen_hashes)
-            ]
+            # ── STRICT NEVER-REPEAT MODE (WITH COOLOFF EXPIRATION) ──
+            cooloff_cutoff = 0.0
+            if self.repeat_cooloff_days and self.repeat_cooloff_days > 0:
+                cooloff_cutoff = current_time - (self.repeat_cooloff_days * 86400.0)
+
+            def _is_meme_seen(c_path: Path) -> bool:
+                cid = extract_canonical_id(c_path.name).lower()
+                cname = c_path.name.lower()
+                chash = self.get_file_hash(c_path).lower() if self.get_file_hash(c_path) else ""
+
+                # Check if recorded in memory / database
+                seen = (
+                    cid in self._seen_ids
+                    or cname in self._seen_ids
+                    or (bool(chash) and chash in self._seen_hashes)
+                )
+                if not seen:
+                    return False
+
+                # If cooloff is enabled and the meme was shown before the cutoff, it is fresh again!
+                if cooloff_cutoff > 0:
+                    last_shown = self._last_shown_map.get(cname, self._last_shown_map.get(cid, 0.0))
+                    if 0 < last_shown < cooloff_cutoff:
+                        return False  # Cooloff expired!
+
+                return True
+
+            eligible = [c for c in candidates if not _is_meme_seen(c)]
+
+            if len(eligible) <= 4 and hasattr(self, "_on_low_inventory") and self._on_low_inventory:
+                try:
+                    self._on_low_inventory(vibe)
+                except Exception:
+                    pass
 
             if not eligible:
                 # Local vibe folder exhausted! Search compatible affinity clusters only
@@ -464,13 +562,7 @@ class MemeRetriever:
                             if f.is_file() and f.suffix.lower() in self.VALID_EXTENSIONS
                         ])
                     for oc in ov_candidates:
-                        cid = extract_canonical_id(oc.name).lower()
-                        chash = self.get_file_hash(oc).lower()
-                        if (
-                            cid not in self._seen_ids
-                            and oc.name.lower() not in self._seen_ids
-                            and (not chash or chash not in self._seen_hashes)
-                        ):
+                        if not _is_meme_seen(oc):
                             other_unseen.append(oc)
                     if other_unseen:
                         # Stop at first compatible vibe that has fresh unseen memes

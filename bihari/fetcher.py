@@ -57,7 +57,7 @@ VIBE_SUBREDDITS: dict[Vibe, list[str]] = {
     ],
     Vibe.GRINDING: [
         "reactionpics",
-        "AnimalsBeingDerps",
+        "rarepuppers",
         "wunkus",
     ],
     Vibe.BURNOUT_APPROACHING: [
@@ -76,17 +76,17 @@ VIBE_SUBREDDITS: dict[Vibe, list[str]] = {
         "programmerhumor",
         "reactionpics",
         "ReactionMemes",
-        "AnimalsBeingDerps",
+        "rarepuppers",
     ],
     Vibe.MOUNTING_FRICTION: [
         "reactionpics",
         "hmmm",
-        "AnimalsBeingDerps",
+        "rarepuppers",
         "me_irl",
     ],
     Vibe.WANDERING: [
         "hmmm",
-        "AnimalsBeingDerps",
+        "rarepuppers",
         "reactionpics",
         "me_irl",
     ],
@@ -98,7 +98,7 @@ VIBE_SUBREDDITS: dict[Vibe, list[str]] = {
     ],
     Vibe.TAB_BUTTERFLY: [
         "reactionpics",
-        "AnimalsBeingDerps",
+        "rarepuppers",
         "wunkus",
         "hmmm",
     ],
@@ -110,7 +110,7 @@ VIBE_SUBREDDITS: dict[Vibe, list[str]] = {
     Vibe.MEETING_RECOVERY: [
         "reactionpics",
         "Eyebleach",
-        "AnimalsBeingDerps",
+        "rarepuppers",
         "me_irl",
     ],
     Vibe.AFTERNOON_DRIFT: [
@@ -134,7 +134,7 @@ API_HEADERS = {
 }
 
 RSS_HEADERS = {
-    "User-Agent": "windows:bihari_mindful_desktop:v0.1.0 (by /u/bihari_mirror)",
+    "User-Agent": "windows:bihari_mindful_desktop:v0.2.0 (by /u/bihari_mirror)",
     "Accept": "application/rss+xml, application/xml, text/xml, */*",
 }
 

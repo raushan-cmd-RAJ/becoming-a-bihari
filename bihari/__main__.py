@@ -53,7 +53,7 @@ if __package__ in (None, ""):
     from bihari.display import MemeOverlay
     from bihari.tray import SystemTray, ensure_default_desktop
     from bihari.logger import VibeLogger
-    from bihari.fetcher import seed_in_background, search_live_contextual_meme
+    from bihari.fetcher import seed_in_background, search_live_contextual_meme, fetch_memes_for_vibe
     from bihari.context import extract_context
     from bihari.ocr import ScreenTextExtractor
 else:
@@ -73,15 +73,28 @@ else:
     from .display import MemeOverlay
     from .tray import SystemTray, ensure_default_desktop
     from .logger import VibeLogger
-    from .fetcher import seed_in_background, search_live_contextual_meme
+    from .fetcher import seed_in_background, search_live_contextual_meme, fetch_memes_for_vibe
     from .context import extract_context
     from .ocr import ScreenTextExtractor
 
 # ── Logging setup ──
+_log_handlers = []
+if sys.stdout is not None:
+    _log_handlers.append(logging.StreamHandler(sys.stdout))
+try:
+    _local_app = os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))
+    _log_dir = Path(_local_app) / "Bihari"
+    _log_dir.mkdir(parents=True, exist_ok=True)
+    _log_file = _log_dir / "vihara.log"
+    _log_handlers.append(logging.FileHandler(str(_log_file), mode="a", encoding="utf-8"))
+except Exception:
+    pass
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
     datefmt="%H:%M:%S",
+    handlers=_log_handlers if _log_handlers else None,
 )
 logger = logging.getLogger("bihari")
 
@@ -92,12 +105,11 @@ def main():
     # ── Load configuration ──
     cfg = load_config()
     current_track = {"value": cfg["general"].get("brand_track", "vihara")}
-    active_name = "Vihara" if current_track["value"] == "vihara" else "Becoming a Bihari"
+    active_name = "Vihara"
 
     logger.info("=" * 50)
-    logger.info(f"  {active_name} v0.1.0")
+    logger.info(f"  {active_name} v0.2.0")
     logger.info("  Privacy-first vibe detection & mindfulness mirror")
-    logger.info(f"  Brand Track: {current_track['value']}")
     logger.info("=" * 50)
 
     # ── Initialize Module 1: THE SPY ──
@@ -132,6 +144,7 @@ def main():
     # ── Initialize Module 3: THE PACK MANAGER & MEME RETRIEVER ──
     local_app = os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))
     packs_dir = Path(local_app) / "Vihara" / "packs"
+    bundled_pack = None
     if getattr(sys, "frozen", False):
         exe_dir = Path(sys.executable).parent
         candidates = [
@@ -140,9 +153,11 @@ def main():
         ]
         if hasattr(sys, "_MEIPASS"):
             candidates.append(Path(sys._MEIPASS) / "packs" / "default.lucidpack")
-        bundled_pack = next((p for p in candidates if p.exists()), candidates[0])
+        bundled_pack = next((p for p in candidates if p.exists()), None)
     else:
-        bundled_pack = Path(__file__).resolve().parent.parent / "packs" / "default.lucidpack"
+        dev_pack = Path(__file__).resolve().parent.parent / "packs" / "default.lucidpack"
+        if dev_pack.exists():
+            bundled_pack = dev_pack
     pack_manager = PackManager(
         packs_dir=packs_dir,
         bundled_pack_path=bundled_pack,
@@ -166,7 +181,11 @@ def main():
         history_db=db_path,
         pack_manager=pack_manager,
         never_repeat=cfg.get("general", {}).get("never_repeat", True),
+        repeat_cooloff_days=cfg.get("general", {}).get("repeat_cooloff_days", 30),
+        max_seen_history_files=cfg.get("general", {}).get("max_seen_history_files", 10),
     )
+    # Automatically prune older seen memes from past sessions to keep storage bounded
+    retriever.prune_seen_memes()
 
     # Log meme inventory
     counts = retriever.get_meme_count()
@@ -178,14 +197,48 @@ def main():
             f"  See {meme_dir / 'README.txt'} for instructions."
         )
 
-    # ── Online Meme Seeder (if enabled) ──
+    # ── Online Meme Seeder & Continuous Replenishment ──
     fetcher_cfg = cfg.get("fetcher", {})
-    if fetcher_cfg.get("online_fetch", False):
-        logger.info("Online meme fetcher enabled — checking if seeding is needed...")
+    min_threshold = fetcher_cfg.get("min_threshold", 8)
+    target_count = fetcher_cfg.get("target_count", 15)
+    online_fetch = fetcher_cfg.get("online_fetch", True)
+
+    # Low-inventory auto-replenishment handler (runs on-demand when local candidates drop low)
+    replenishing_vibes = set()
+    replenishing_lock = threading.Lock()
+
+    def handle_low_inventory(low_vibe):
+        if not online_fetch:
+            return
+        with replenishing_lock:
+            if low_vibe in replenishing_vibes:
+                return
+            replenishing_vibes.add(low_vibe)
+
+        def _replenish_worker():
+            try:
+                logger.info(f"🔄 Low unseen inventory for {low_vibe.name} — auto-replenishing fresh memes in background...")
+                fetch_memes_for_vibe(low_vibe, meme_dir, count=8, seen_ids=retriever.seen_ids)
+            except Exception as e:
+                logger.debug(f"Auto-replenish failed for {low_vibe.name}: {e}")
+            finally:
+                with replenishing_lock:
+                    replenishing_vibes.discard(low_vibe)
+
+        threading.Thread(target=_replenish_worker, daemon=True, name=f"TopUp-{low_vibe.name}").start()
+
+    retriever._on_low_inventory = handle_low_inventory
+
+    # Auto-seed memes in background on startup if below threshold or online_fetch enabled
+    if online_fetch or total_memes < min_threshold:
+        logger.info(
+            f"Auto-seeding memes on startup (inventory: {total_memes}, threshold: {min_threshold})..."
+        )
         seed_in_background(
             meme_dir=meme_dir,
-            min_threshold=fetcher_cfg.get("min_threshold", 3),
-            target_count=fetcher_cfg.get("target_count", 10),
+            min_threshold=min_threshold,
+            target_count=target_count,
+            force=(total_memes < min_threshold),
             seen_ids=retriever.seen_ids,
         )
 
@@ -228,13 +281,6 @@ def main():
         paused.clear()
         logger.info("▶️  Resumed — meme delivery active.")
 
-    def handle_toggle_track(new_track: str):
-        current_track["value"] = new_track
-        overlay.brand_track = new_track
-        name = "Vihara" if new_track == "vihara" else "Becoming a Bihari"
-        root.title(name)
-        logger.info(f"🔄 Switched brand track to: {new_track} ({name})")
-
     def handle_quit():
         logger.info("Quit requested from tray.")
         cleanup()
@@ -258,20 +304,21 @@ def main():
 
     def handle_test_meme():
         logger.info("Test meme display triggered.")
-        import random
         from .inference import Vibe, VIBE_FOLDER_NAMES, get_reflection
+        from .spy import TelemetryEvent
         
-        # Try to capture active window context for the test reflection
-        test_ctx = None
+        # 1. Capture active foreground window context
+        app, title = "powershell.exe", "Windows PowerShell"
         try:
             info = monitor._get_foreground_info()
             if info:
                 app, title = privacy.sanitize(*info)
-                test_ctx = extract_context(app, title)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Could not get foreground info for test meme: {e}")
 
-        # If on social media with a clean search query, try live search first for the test
+        test_ctx = extract_context(app, title)
+
+        # 2. If on social media with a clean search query, try live search first for the test
         if test_ctx and test_ctx.is_social and test_ctx.search_query:
             logger.info(f"📱 Testing live search for '{test_ctx.search_query}'...")
             live = search_live_contextual_meme(
@@ -283,27 +330,65 @@ def main():
             )
             if live:
                 retriever.record_shown(time.time(), live)
-                label = get_reflection(Vibe.LOST_IN_SCROLL, context=test_ctx, brand_track=current_track["value"])
-                root.after(0, lambda p=live, l=label: overlay.show(p, l, vibe=Vibe.LOST_IN_SCROLL, brand_track=current_track["value"]))
+                label = get_reflection(Vibe.LOST_IN_SCROLL, context=test_ctx, brand_track="vihara")
+                root.after(0, lambda p=live, l=label: overlay.show(p, l, vibe=Vibe.LOST_IN_SCROLL, brand_track="vihara"))
                 logger.info(f"Showing live test meme: {live.name} for '{test_ctx.search_query}'")
                 return
 
-        vibes = list(Vibe)
-        random.shuffle(vibes)
-        for vibe in vibes:
-            folder = meme_dir / VIBE_FOLDER_NAMES[vibe]
+        # 3. Classify the actual foreground window and telemetry
+        test_event = TelemetryEvent(
+            app_name=app,
+            window_title=title,
+            typing_speed=30.0,
+            backspace_rate=0.03,
+            backspace_count=1,
+            window_switches_3min=1,
+            dwell_minutes=10.0,
+            session_minutes=15.0,
+        )
+        vibe_res = classifier.classify(test_event, allow_laya=True)
+        chosen_vibe = vibe_res.vibe
+        logger.info(f"🎯 Active window '{app}' classified as: {chosen_vibe.name} (confidence {vibe_res.confidence*100:.1f}% via {vibe_res.source})")
+
+        # 4. Retrieve meme matching the classified vibe
+        now = time.time()
+        meme_path = retriever.get_meme(chosen_vibe, current_time=now, cooldown=0.0)
+        if not meme_path:
+            folder = meme_dir / VIBE_FOLDER_NAMES[chosen_vibe]
             if folder.exists():
                 files = [f for f in folder.iterdir() if f.is_file() and f.suffix.lower() in retriever.VALID_EXTENSIONS]
                 if files:
-                    chosen = random.choice(files)
-                    label = get_reflection(vibe, context=test_ctx, brand_track=current_track["value"])
-                    root.after(0, lambda p=chosen, l=label, v=vibe: overlay.show(p, l, vibe=v, brand_track=current_track["value"]))
-                    logger.info(f"Showing test meme: {chosen.name} ({VIBE_FOLDER_NAMES[vibe]})")
-                    return
-        logger.warning("No memes found in local folders — displaying graceful text-only reflection card fallback!")
-        chosen_vibe = random.choice(list(Vibe))
-        label = get_reflection(chosen_vibe, context=test_ctx, brand_track=current_track["value"])
-        root.after(0, lambda l=label, v=chosen_vibe: overlay.show(None, l, vibe=v, brand_track=current_track["value"]))
+                    import random
+                    meme_path = random.choice(files)
+
+        if meme_path:
+            retriever.record_shown(now, meme_path)
+            label = get_reflection(chosen_vibe, context=test_ctx, brand_track="vihara")
+            root.after(0, lambda p=meme_path, l=label, v=chosen_vibe: overlay.show(p, l, vibe=v, brand_track="vihara"))
+            logger.info(f"Showing test meme: {meme_path.name} ({VIBE_FOLDER_NAMES[chosen_vibe]})")
+            return
+
+        # 5. If no meme in this specific folder yet, check any folder as visual fallback
+        for alt_vibe in Vibe:
+            alt_path = retriever.get_meme(alt_vibe, current_time=now, cooldown=0.0)
+            if not alt_path:
+                alt_folder = meme_dir / VIBE_FOLDER_NAMES[alt_vibe]
+                if alt_folder.exists():
+                    alt_files = [f for f in alt_folder.iterdir() if f.is_file() and f.suffix.lower() in retriever.VALID_EXTENSIONS]
+                    if alt_files:
+                        import random
+                        alt_path = random.choice(alt_files)
+            if alt_path:
+                retriever.record_shown(now, alt_path)
+                label = get_reflection(chosen_vibe, context=test_ctx, brand_track="vihara")
+                root.after(0, lambda p=alt_path, l=label, v=chosen_vibe: overlay.show(p, l, vibe=v, brand_track="vihara"))
+                logger.info(f"Showing test meme: {alt_path.name} (fallback from {VIBE_FOLDER_NAMES[alt_vibe]} for {chosen_vibe.name})")
+                return
+
+        # 6. Graceful text-only fallback if zero memes on disk
+        logger.warning("No memes found on disk — displaying graceful text-only reflection card fallback!")
+        label = get_reflection(chosen_vibe, context=test_ctx, brand_track="vihara")
+        root.after(0, lambda l=label, v=chosen_vibe: overlay.show(None, l, vibe=v, brand_track="vihara"))
 
     tray = SystemTray(
         on_pause=handle_pause,
@@ -312,8 +397,7 @@ def main():
         on_open_memes=handle_open_memes,
         on_refresh_memes=handle_refresh_memes,
         on_test_meme=handle_test_meme,
-        on_toggle_track=handle_toggle_track,
-        brand_track=current_track["value"],
+        brand_track="vihara",
     )
     tray_thread = threading.Thread(target=tray.run, name="SystemTray", daemon=True)
     tray_thread.start()
@@ -531,18 +615,18 @@ def main():
 
                         if meme_path:
                             meme_shown = meme_path.name
-                            label = custom_reflection if custom_reflection else get_reflection(result.vibe, context=ctx, brand_track=current_track["value"], dwell_minutes=getattr(event, "dwell_minutes", None))
+                            label = custom_reflection if custom_reflection else get_reflection(result.vibe, context=ctx, brand_track="vihara", dwell_minutes=getattr(event, "dwell_minutes", None))
                             logger.info(
                                 f"🎯 {result} (ctx={ctx.subject if ctx else 'none'}) → showing {meme_path.name}"
                             )
                             # Marshal to main thread for tkinter safety
                             root.after(
                                 0,
-                                lambda p=meme_path, l=label, v=result.vibe: overlay.show(p, l, vibe=v, brand_track=current_track["value"]),
+                                lambda p=meme_path, l=label, v=result.vibe: overlay.show(p, l, vibe=v, brand_track="vihara"),
                             )
                         else:
                             # Dignified text-only reflection card fallback when no meme image exists
-                            label = custom_reflection if custom_reflection else get_reflection(result.vibe, context=ctx, brand_track=current_track["value"], dwell_minutes=getattr(event, "dwell_minutes", None))
+                            label = custom_reflection if custom_reflection else get_reflection(result.vibe, context=ctx, brand_track="vihara", dwell_minutes=getattr(event, "dwell_minutes", None))
                             logger.info(
                                 f"🎯 {result} (ctx={ctx.subject if ctx else 'none'}) → showing text reflection card (no meme image)"
                             )
@@ -551,7 +635,7 @@ def main():
                                 last_social_meme_time = now
                             root.after(
                                 0,
-                                lambda l=label, v=result.vibe: overlay.show(None, l, vibe=v, brand_track=current_track["value"]),
+                                lambda l=label, v=result.vibe: overlay.show(None, l, vibe=v, brand_track="vihara"),
                             )
                 else:
                     logger.debug(f"Low confidence: {result} — skipping meme.")

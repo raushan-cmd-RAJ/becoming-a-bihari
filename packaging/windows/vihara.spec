@@ -10,6 +10,23 @@ import os
 import sys
 from pathlib import Path
 
+# Fix: Prevent PyInstaller Windows isolated subprocess crash (0xC0000005) caused by
+# winrt COM initialization conflicting with native onnxruntime DLL inspection.
+try:
+    import PyInstaller.building.build_main as pyi_build
+    _orig_find_binary_dependencies = pyi_build.find_binary_dependencies
+
+    def _safe_find_binary_dependencies(binaries, import_packages, symlink_suppression_patterns=None):
+        filtered = [p for p in import_packages if not p.startswith("winrt")]
+        if "onnxruntime" in filtered:
+            filtered.remove("onnxruntime")
+            filtered.insert(0, "onnxruntime")
+        return _orig_find_binary_dependencies(binaries, filtered, symlink_suppression_patterns)
+
+    pyi_build.find_binary_dependencies = _safe_find_binary_dependencies
+except Exception as e:
+    pass
+
 # Spec directory is packaging/windows, project root is 2 levels up
 SPEC_DIR = Path(SPECPATH).resolve() if "SPECPATH" in globals() else Path(__file__).resolve().parent
 PROJECT_ROOT = SPEC_DIR.parent.parent
@@ -17,14 +34,15 @@ PROJECT_ROOT = SPEC_DIR.parent.parent
 # 1. Bundled Static Data Files
 added_datas = [
     (str(PROJECT_ROOT / "config.toml"), "."),
-    (str(PROJECT_ROOT / "packs" / "default.lucidpack"), "packs"),
     (str(PROJECT_ROOT / "memes"), "memes"),
-    (str(PROJECT_ROOT / "bihari" / "models" / "base_brain.json"), "bihari/models"),
+    (str(PROJECT_ROOT / "bihari" / "models"), "bihari/models"),
 ]
 
 # 2. Hidden Imports for Platform and Dependencies
 hidden_imports = [
+    "bihari.onnx_brain",
     "bihari.micro_model",
+    "onnxruntime",
     "PIL",
     "PIL.Image",
     "PIL.ImageTk",
@@ -51,7 +69,7 @@ hidden_imports = [
     "bihari.pal.windows",
 ]
 
-# 3. Explicit Exclusions (Eliminating bloat from core distribution)
+# 3. Explicit Exclusions (Eliminating bloat and heavy dev dependencies from standalone distribution)
 excluded_modules = [
     "torch",
     "torchvision",
@@ -65,6 +83,29 @@ excluded_modules = [
     "jupyter",
     "unittest",
     "test",
+    # Legacy & dev dependencies (Replaced by Option B ONNXBrain and Option A MicroBrain)
+    "laya",
+    "transformers",
+    "huggingface_hub",
+    "safetensors",
+    "sklearn",
+    "joblib",
+    "fastapi",
+    "starlette",
+    "uvicorn",
+    "watchfiles",
+    "werkzeug",
+    "pytest",
+    "_pytest",
+    "Cython",
+    "pyximport",
+    "yt_dlp",
+    "jinja2",
+    "google.protobuf",
+    "pygments",
+    "cryptography",
+    "curl_cffi",
+    "defusedxml",
 ]
 
 # 4. Version Resource Metadata and Icon

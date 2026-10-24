@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="becoming-a-bihari",
-    version="0.1.0",
+    version="0.2.0",
     description="Privacy-first, vibe-aware meme delivery system for Windows 11",
     author="Raushan",
     python_requires=">=3.10",

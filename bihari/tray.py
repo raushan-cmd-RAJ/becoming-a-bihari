@@ -227,17 +227,6 @@ class SystemTray:
         win32gui.AppendMenu(menu, win32con.MF_STRING, IDM_PAUSE, "Pause")
         win32gui.AppendMenu(menu, win32con.MF_STRING, IDM_RESUME, "Resume")
         win32gui.AppendMenu(menu, win32con.MF_SEPARATOR, 0, "")
-
-        # Reflection Mode toggle submenu
-        mode_menu = win32gui.CreatePopupMenu()
-        is_bihari = str(self.brand_track).lower() in ("bihari", "consumer", "savage")
-        vihara_flags = win32con.MF_STRING | (win32con.MF_UNCHECKED if is_bihari else win32con.MF_CHECKED)
-        bihari_flags = win32con.MF_STRING | (win32con.MF_CHECKED if is_bihari else win32con.MF_UNCHECKED)
-        win32gui.AppendMenu(mode_menu, vihara_flags, IDM_TRACK_VIHARA, "Dignified (Vihara)")
-        win32gui.AppendMenu(mode_menu, bihari_flags, IDM_TRACK_BIHARI, "Savage (Bihari)")
-        win32gui.AppendMenu(menu, win32con.MF_POPUP, mode_menu, "Reflection Mode")
-
-        win32gui.AppendMenu(menu, win32con.MF_SEPARATOR, 0, "")
         win32gui.AppendMenu(menu, win32con.MF_STRING, IDM_OPEN_MEMES, "Open Meme Folder")
 
         if self.on_test_meme:
@@ -267,15 +256,7 @@ class SystemTray:
         win32gui.PostMessage(self.hwnd, win32con.WM_NULL, 0, 0)
         win32gui.DestroyMenu(menu)
 
-        if cmd == IDM_TRACK_VIHARA:
-            self.set_brand_track("vihara")
-            if self.on_toggle_track:
-                self.on_toggle_track("vihara")
-        elif cmd == IDM_TRACK_BIHARI:
-            self.set_brand_track("bihari")
-            if self.on_toggle_track:
-                self.on_toggle_track("bihari")
-        elif cmd == IDM_PAUSE:
+        if cmd == IDM_PAUSE:
             self.on_pause()
         elif cmd == IDM_RESUME:
             self.on_resume()

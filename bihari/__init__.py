@@ -6,5 +6,5 @@ classifies your emotional state, and serves you contextual memes.
 Runs entirely locally on resource-constrained hardware.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __project__ = "Becoming a Bihari"

@@ -39,12 +39,77 @@ def _hash_feature(token: str, num_buckets: int = NUM_FEATURES) -> int:
     return int.from_bytes(digest[:4], "little") % num_buckets
 
 
+# App role mapping for semantic zero-shot generalization across tools
+APP_ROLES: dict[str, str] = {
+    # Code Editors / IDEs
+    "code.exe": "code_editor",
+    "devenv.exe": "code_editor",
+    "idea64.exe": "code_editor",
+    "pycharm64.exe": "code_editor",
+    "rider64.exe": "code_editor",
+    "webstorm64.exe": "code_editor",
+    "goland64.exe": "code_editor",
+    "clion64.exe": "code_editor",
+    "sublime_text.exe": "code_editor",
+    "notepad++.exe": "code_editor",
+    "nvim.exe": "code_editor",
+    "vim.exe": "code_editor",
+    "cursor.exe": "code_editor",
+    "zed.exe": "code_editor",
+    "antigravity.exe": "code_editor",
+    "emacs.exe": "code_editor",
+    # Terminals
+    "windowsterminal.exe": "terminal",
+    "powershell.exe": "terminal",
+    "cmd.exe": "terminal",
+    "wt.exe": "terminal",
+    "alacritty.exe": "terminal",
+    "wezterm-gui.exe": "terminal",
+    "kitty.exe": "terminal",
+    "mintty.exe": "terminal",
+    "bash.exe": "terminal",
+    # Browsers
+    "chrome.exe": "browser",
+    "msedge.exe": "browser",
+    "firefox.exe": "browser",
+    "brave.exe": "browser",
+    "opera.exe": "browser",
+    "vivaldi.exe": "browser",
+    "arc.exe": "browser",
+    "safari.exe": "browser",
+    # Communications
+    "zoom.exe": "meeting",
+    "teams.exe": "meeting",
+    "webex.exe": "meeting",
+    "slack.exe": "messaging",
+    "discord.exe": "messaging",
+    "telegram.exe": "messaging",
+    "whatsapp.exe": "messaging",
+    # Productivity / Documents
+    "obsidian.exe": "productivity",
+    "notion.exe": "productivity",
+    "winword.exe": "productivity",
+    "excel.exe": "productivity",
+    "powerpnt.exe": "productivity",
+    "typora.exe": "productivity",
+    "onenote.exe": "productivity",
+    "figma.exe": "productivity",
+    "linear.exe": "productivity",
+    "blender.exe": "creative",
+    # Media
+    "spotify.exe": "media",
+    "vlc.exe": "media",
+    "mpv.exe": "media",
+    "netflix.exe": "media",
+}
+
+
 class FeatureExtractor:
     """Extracts sparse hashed n-gram and telemetry features from window/OCR context."""
 
     @staticmethod
     def extract_text_features(text: str, prefix: str = "w:") -> dict[int, float]:
-        """Extract unigram, bigram, and char-trigram features into a sparse vector."""
+        """Extract unigram, bigram, char-trigram, and semantic domain features into a sparse vector."""
         if not text:
             return {}
 
@@ -70,6 +135,36 @@ class FeatureExtractor:
                     bucket = _hash_feature(f"{prefix}tri:{tri}")
                     features[bucket] = features.get(bucket, 0.0) + 0.3
 
+        # 4. Domain & Syntax Signals from text
+        lower_text = text.lower()
+
+        # File extensions (strong coding / document signal)
+        ext_match = re.findall(r"\.([a-zA-Z0-9_]{1,6})(?:\s|$|[-—:|])", lower_text)
+        for ext in ext_match:
+            b = _hash_feature(f"sem_ext:{ext}")
+            features[b] = features.get(b, 0.0) + 2.0
+
+        # Semantic keywords matching System 1 intent
+        if any(k in lower_text for k in ["syntaxerror", "typeerror", "referenceerror", "error:", "exception", "traceback", "failed with", "merge conflict", "build failed", "cannot find", "undefined is not"]):
+            b = _hash_feature("sem_signal:syntax_friction")
+            features[b] = features.get(b, 0.0) + 2.5
+
+        if any(k in lower_text for k in ["stackoverflow", "stack overflow", "github issue", "documentation", "docs.", "tutorial", "how to", "chatgpt", "claude", "gemini", "copilot", "api reference"]):
+            b = _hash_feature("sem_signal:help_seeking")
+            features[b] = features.get(b, 0.0) + 2.5
+
+        if any(k in lower_text for k in ["youtube", "reels", "shorts", "tiktok", "instagram", "reddit", "twitter", "x.com", "twitch", "watch?v=", "feed"]):
+            b = _hash_feature("sem_signal:social_media")
+            features[b] = features.get(b, 0.0) + 2.5
+
+        if any(k in lower_text for k in ["zoom meeting", "teams meeting", "google meet", "call ended", "webex", "video call"]):
+            b = _hash_feature("sem_signal:meeting")
+            features[b] = features.get(b, 0.0) + 2.5
+
+        if any(k in lower_text for k in ["wikipedia", "arxiv", "substack", "hacker news", "article", "paper", "reading"]):
+            b = _hash_feature("sem_signal:reading")
+            features[b] = features.get(b, 0.0) + 2.0
+
         # L2 Normalize the text vector
         norm_sq = sum(v * v for v in features.values())
         if norm_sq > 0.0:
@@ -88,6 +183,9 @@ class FeatureExtractor:
         if app_name:
             app_b = _hash_feature(f"app:{app_name}")
             features[app_b] = 1.5
+            role = APP_ROLES.get(app_name)
+            if role:
+                features[_hash_feature(f"app_role:{role}")] = 2.0
 
         # Keystroke velocity features
         cpm = float(getattr(event, "typing_speed", 0.0))
@@ -101,15 +199,52 @@ class FeatureExtractor:
         features[_hash_feature("tel:switches")] = min(switches / 10.0, 2.0)
         features[_hash_feature("tel:dwell")] = min(dwell / 30.0, 2.0)
 
-        # Nonlinear interactions
-        if cpm > 50 and bs_rate < 0.10:
-            features[_hash_feature("tel:flow_condition")] = 2.0
+        # Discretized Quantile Bins for Non-Linear Step Responses
+        if cpm == 0:
+            features[_hash_feature("cpm_bin:0")] = 1.5
+        elif cpm < 25:
+            features[_hash_feature("cpm_bin:slow")] = 1.0
+        elif cpm < 60:
+            features[_hash_feature("cpm_bin:medium")] = 1.0
+        else:
+            features[_hash_feature("cpm_bin:fast")] = 1.5
+
+        if bs_rate < 0.08:
+            features[_hash_feature("bs_bin:clean")] = 1.5
+        elif bs_rate < 0.25:
+            features[_hash_feature("bs_bin:moderate")] = 1.0
+        else:
+            features[_hash_feature("bs_bin:erratic")] = 1.5
+
+        if dwell < 2.0:
+            features[_hash_feature("dwell_bin:transient")] = 1.0
+        elif dwell < 15.0:
+            features[_hash_feature("dwell_bin:focused")] = 1.0
+        elif dwell < 60.0:
+            features[_hash_feature("dwell_bin:deep")] = 1.5
+        else:
+            features[_hash_feature("dwell_bin:marathon")] = 2.0
+
+        if switches <= 2:
+            features[_hash_feature("switch_bin:stable")] = 1.5
+        elif switches <= 6:
+            features[_hash_feature("switch_bin:active")] = 1.0
+        else:
+            features[_hash_feature("switch_bin:hectic")] = 1.5
+
+        # Nonlinear interactions & Bilinear Multipliers
+        if cpm > 50 and bs_rate < 0.08:
+            features[_hash_feature("tel:flow_condition")] = 2.5
         if bs_rate > 0.35 and cpm > 25:
-            features[_hash_feature("tel:syntax_rage_condition")] = 2.0
+            features[_hash_feature("tel:syntax_rage_condition")] = 2.5
         if switches >= 5 and cpm < 15:
             features[_hash_feature("tel:butterfly_condition")] = 2.0
         if dwell > 15 and cpm < 10:
             features[_hash_feature("tel:trance_condition")] = 2.0
+        if cpm == 0 and switches == 0:
+            features[_hash_feature("tel:stillness_condition")] = 2.5
+        if dwell > 60 and cpm > 30:
+            features[_hash_feature("tel:grind_condition")] = 2.0
 
         return features
 

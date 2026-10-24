@@ -424,11 +424,13 @@ class PackManager:
             self.packs_dir = Path(packs_dir)
 
         if bundled_pack_path is None:
-            # Default location: packs/default.lucidpack in repository root
+            # Default location: packs/default.lucidpack in repository root (optional dev asset)
             workspace_root = Path(__file__).resolve().parent.parent
-            self.bundled_pack_path = workspace_root / "packs" / "default.lucidpack"
+            candidate = workspace_root / "packs" / "default.lucidpack"
+            self.bundled_pack_path = candidate if candidate.exists() else None
         else:
-            self.bundled_pack_path = Path(bundled_pack_path)
+            p = Path(bundled_pack_path)
+            self.bundled_pack_path = p if p.exists() else None
 
         if cache_dir is None:
             self.cache_dir = self.packs_dir / ".cache"

@@ -235,3 +235,83 @@ class TestNeverRepeatEngine:
         row = cur.fetchone()
         conn.close()
         assert row[0] == expected_hash
+
+    def test_repeat_cooloff_allows_reshowing_after_period(self, tmp_path):
+        """Verify memes seen older than repeat_cooloff_days are allowed to re-enter rotation."""
+        meme_dir = tmp_path / "memes"
+        vibe_folder = meme_dir / VIBE_FOLDER_NAMES[Vibe.FLOW_STATE]
+        vibe_folder.mkdir(parents=True)
+
+        meme1 = vibe_folder / "reddit_sub_oldmeme.png"
+        meme1.write_bytes(b"content old")
+
+        db_file = tmp_path / "test_history.db"
+        import time
+        now = time.time()
+        # Meme was shown 35 days ago (35 * 86400 seconds)
+        old_time = now - (35 * 86400.0)
+
+        conn = sqlite3.connect(str(db_file))
+        conn.execute("""
+            CREATE TABLE seen_memes (
+                meme_id TEXT PRIMARY KEY,
+                file_hash TEXT,
+                filename TEXT,
+                shown_at REAL
+            )
+        """)
+        conn.execute("INSERT INTO seen_memes VALUES (?, ?, ?, ?)", ("oldmeme", "hash1", "reddit_sub_oldmeme.png", old_time))
+        conn.commit()
+        conn.close()
+
+        # Initialize with repeat_cooloff_days=30
+        retriever = MemeRetriever(
+            meme_dir=meme_dir,
+            cooldown_seconds=0,
+            history_db=db_file,
+            never_repeat=True,
+            repeat_cooloff_days=30.0,
+        )
+
+        # Because it was shown 35 days ago (> 30 days cooloff), it should be eligible again!
+        chosen = retriever.get_meme(Vibe.FLOW_STATE, current_time=now, cooldown=0)
+        assert chosen is not None
+        assert chosen.name == "reddit_sub_oldmeme.png"
+
+    def test_prune_seen_memes_purges_older_seen_files_from_disk(self, tmp_path):
+        """Verify older seen memes exceeding max_seen_history_files are purged from disk."""
+        meme_dir = tmp_path / "memes"
+        vibe_folder = meme_dir / VIBE_FOLDER_NAMES[Vibe.LOST_IN_SCROLL]
+        vibe_folder.mkdir(parents=True)
+
+        db_file = tmp_path / "test_history.db"
+        retriever = MemeRetriever(
+            meme_dir=meme_dir,
+            cooldown_seconds=0,
+            history_db=db_file,
+            never_repeat=True,
+            max_seen_history_files=3,
+        )
+
+        # Create 5 files and record them as shown in sequence
+        files = []
+        for i in range(5):
+            f = vibe_folder / f"reddit_scroll_post{i}.png"
+            f.write_bytes(f"binary content {i}".encode("utf-8"))
+            files.append(f)
+            retriever.record_shown(current_time=100.0 + i, meme_path=f)
+
+        # After showing 5 files with max_seen_history_files=3:
+        # The 2 oldest files (post0 and post1) should be purged from disk
+        assert not (vibe_folder / "reddit_scroll_post0.png").exists()
+        assert not (vibe_folder / "reddit_scroll_post1.png").exists()
+
+        # The 3 most recent files (post2, post3, post4) must still be on disk
+        assert (vibe_folder / "reddit_scroll_post2.png").exists()
+        assert (vibe_folder / "reddit_scroll_post3.png").exists()
+        assert (vibe_folder / "reddit_scroll_post4.png").exists()
+
+        # Crucially: post0 and post1 are still recorded in SQLite history and _seen_ids
+        assert "post0" in retriever.seen_ids
+        assert "post1" in retriever.seen_ids
+
